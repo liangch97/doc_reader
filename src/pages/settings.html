@@ -1,0 +1,549 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>模型设置 — Notebook Helper</title>
+
+    <!-- Lucide Icons (local) -->
+    <script src="/static/vendor/lucide.min.js" defer></script>
+
+    <!-- App CSS -->
+    <link rel="stylesheet" href="/static/style.css" />
+
+    <style>
+        .settings-container { max-width: 720px; margin: 0 auto; padding: 24px 0; }
+        .settings-header { display: flex; align-items: center; gap: 12px; margin-bottom: 24px; }
+        .settings-header h2 { font-size: 1.25rem; font-weight: 600; margin: 0; }
+
+        /* Model Card */
+        .model-card {
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 16px 20px;
+            margin-bottom: 12px;
+            transition: box-shadow 0.2s;
+        }
+        .model-card:hover { box-shadow: 0 2px 8px rgba(0,0,0,0.06); }
+        .model-card-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+        }
+        .model-card-info { flex: 1; min-width: 0; }
+        .model-card-name {
+            font-weight: 600;
+            font-size: 0.95rem;
+            color: var(--card-foreground);
+            margin-bottom: 4px;
+        }
+        .model-card-detail {
+            font-size: 0.8rem;
+            color: var(--muted-foreground);
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+        .model-card-detail code {
+            background: var(--muted);
+            padding: 1px 6px;
+            border-radius: 4px;
+            font-size: 0.75rem;
+        }
+        .model-card-actions {
+            display: flex;
+            gap: 6px;
+            align-items: center;
+            flex-shrink: 0;
+        }
+
+        /* Toggle switch */
+        .toggle-switch {
+            position: relative;
+            width: 40px;
+            height: 22px;
+            background: var(--muted);
+            border-radius: 11px;
+            cursor: pointer;
+            transition: background 0.2s;
+            border: 1px solid var(--border);
+        }
+        .toggle-switch.active {
+            background: var(--secondary);
+            border-color: var(--secondary);
+        }
+        .toggle-switch::after {
+            content: '';
+            position: absolute;
+            top: 2px; left: 2px;
+            width: 16px; height: 16px;
+            background: white;
+            border-radius: 50%;
+            transition: transform 0.2s;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.15);
+        }
+        .toggle-switch.active::after { transform: translateX(18px); }
+
+        /* Status dot */
+        .status-dot {
+            width: 8px; height: 8px;
+            border-radius: 50%;
+            display: inline-block;
+            margin-right: 4px;
+        }
+        .status-dot.online { background: #22c55e; }
+        .status-dot.offline { background: var(--muted-foreground); }
+        .status-dot.testing { background: #f59e0b; animation: pulse 1s infinite; }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+
+        /* Add form */
+        .add-form {
+            background: var(--card);
+            border: 2px dashed var(--border);
+            border-radius: 12px;
+            padding: 20px;
+            margin-top: 16px;
+            display: none;
+        }
+        .add-form.visible { display: block; }
+        .add-form .form-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+        }
+        .add-form .form-group { display: flex; flex-direction: column; gap: 4px; }
+        .add-form .form-group.full-width { grid-column: 1 / -1; }
+        .add-form label {
+            font-size: 0.8rem;
+            font-weight: 500;
+            color: var(--muted-foreground);
+        }
+        .add-form .form-actions {
+            display: flex;
+            gap: 8px;
+            margin-top: 16px;
+            justify-content: flex-end;
+        }
+
+        /* Empty state */
+        .empty-state {
+            text-align: center;
+            padding: 40px 20px;
+            color: var(--muted-foreground);
+        }
+        .empty-state i { margin-bottom: 12px; opacity: 0.5; }
+        .empty-state p { margin: 8px 0; font-size: 0.9rem; }
+
+        /* Test result toast */
+        .test-toast {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            padding: 12px 20px;
+            border-radius: 8px;
+            font-size: 0.85rem;
+            color: white;
+            z-index: 1000;
+            animation: slideIn 0.3s ease-out;
+            max-width: 360px;
+        }
+        .test-toast.success { background: #22c55e; }
+        .test-toast.error { background: var(--destructive); }
+        @keyframes slideIn { from { transform: translateY(20px); opacity: 0; } }
+
+        /* Pool count badge */
+        .pool-badge {
+            font-size: 0.75rem;
+            padding: 2px 8px;
+            border-radius: 999px;
+            background: var(--secondary);
+            color: var(--secondary-foreground);
+            font-weight: 500;
+        }
+    </style>
+</head>
+<body>
+    <div class="app">
+        <!-- ==================== HEADER ==================== -->
+        <header class="header" data-tauri-drag-region>
+            <div class="header-left" data-tauri-drag-region>
+                <button class="shad-btn-ghost" id="sidebarToggle" aria-label="Toggle sidebar">
+                    <i data-lucide="panel-left"></i>
+                </button>
+                <div class="brand" data-tauri-drag-region>
+                    <span class="brand-icon"><i data-lucide="notebook-pen"></i></span>
+                    <span class="brand-name">Notebook Helper</span>
+                </div>
+            </div>
+            <div class="header-center" data-tauri-drag-region>
+                <span class="notebook-title">模型设置</span>
+            </div>
+            <div class="header-right">
+                <button class="shad-btn-ghost" id="densityToggle" aria-label="Toggle density" title="切换紧凑/舒展密度">
+                    <i data-lucide="stretch-horizontal"></i>
+                </button>
+                <button class="shad-btn-ghost" id="themeToggle" aria-label="Toggle theme">
+                    <i data-lucide="moon"></i>
+                </button>
+                <!-- Window Controls -->
+                <div class="window-controls">
+                    <button class="window-ctrl-btn" id="windowMinimize" aria-label="最小化" title="最小化">
+                        <i data-lucide="minus"></i>
+                    </button>
+                    <button class="window-ctrl-btn" id="windowMaximize" aria-label="最大化" title="最大化">
+                        <i data-lucide="square"></i>
+                    </button>
+                    <button class="window-ctrl-btn window-ctrl-close" id="windowClose" aria-label="关闭" title="关闭">
+                        <i data-lucide="x"></i>
+                    </button>
+                </div>
+            </div>
+        </header>
+
+        <!-- ==================== BODY ==================== -->
+        <div class="app-body">
+            <!-- Mobile overlay -->
+            <div class="sidebar-overlay" id="sidebarOverlay"></div>
+
+            <!-- ========== SIDEBAR ========== -->
+            <aside class="sidebar" id="sidebar">
+                <div class="sidebar-panel">
+                    <button type="button" class="panel-toggle" data-panel="panelInfo">
+                        <span>说明</span>
+                        <span class="panel-toggle-arrow"><i data-lucide="chevron-down"></i></span>
+                    </button>
+                    <div class="panel-body" id="panelInfoBody">
+                        <div class="config-group">
+                            <p style="font-size:0.82rem;color:var(--muted-foreground);line-height:1.5;margin:0;">
+                                添加多个 LLM API 模型后，系统会在生成笔记时<strong>轮询</strong>分配任务到各模型，提升并发速度。
+                            </p>
+                            <p style="font-size:0.82rem;color:var(--muted-foreground);line-height:1.5;margin:8px 0 0;">
+                                如果没有配置任何模型，将自动使用 <code>.env</code> 中的默认模型。
+                            </p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Footer -->
+                <div class="sidebar-footer">
+                    <a class="shad-btn-primary btn-center" href="/">
+                        <i data-lucide="arrow-left" class="icon-16"></i>
+                        返回主页
+                    </a>
+                </div>
+            </aside>
+
+            <!-- ========== MAIN ========== -->
+            <main class="notebook" id="notebook">
+                <div class="settings-container">
+                    <div class="settings-header">
+                        <h2>
+                            <i data-lucide="cpu" style="width:20px;height:20px;vertical-align:-3px;margin-right:4px;"></i>
+                            LLM 模型池
+                        </h2>
+                        <span class="pool-badge" id="poolCount">0 个模型</span>
+                    </div>
+
+                    <!-- Model list -->
+                    <div id="modelList"></div>
+
+                    <!-- Add button -->
+                    <button class="shad-btn-secondary" id="addModelBtn" style="width:100%;margin-top:12px;">
+                        <i data-lucide="plus" class="icon-16"></i>
+                        添加新模型
+                    </button>
+
+                    <!-- Add form (hidden by default) -->
+                    <div class="add-form" id="addForm">
+                        <div class="form-grid">
+                            <div class="form-group">
+                                <label for="newName">显示名称</label>
+                                <input class="shad-input" id="newName" type="text" placeholder="例: 火山引擎 ark-code" />
+                            </div>
+                            <div class="form-group">
+                                <label for="newProvider">提供商</label>
+                                <select class="shad-input" id="newProvider">
+                                    <option value="custom">自定义 (OpenAI 兼容)</option>
+                                    <option value="openai">OpenAI</option>
+                                    <option value="anthropic">Anthropic</option>
+                                </select>
+                            </div>
+                            <div class="form-group full-width">
+                                <label for="newApiBase">API 地址</label>
+                                <input class="shad-input" id="newApiBase" type="text" placeholder="https://api.example.com/v1" />
+                            </div>
+                            <div class="form-group full-width">
+                                <label for="newApiKey">API Key</label>
+                                <input class="shad-input" id="newApiKey" type="password" placeholder="sk-..." />
+                            </div>
+                            <div class="form-group full-width">
+                                <label for="newModel">模型名称</label>
+                                <input class="shad-input" id="newModel" type="text" placeholder="例: gpt-4o, deepseek-chat" />
+                            </div>
+                        </div>
+                        <div class="form-actions">
+                            <button class="shad-btn-ghost" id="cancelAddBtn">取消</button>
+                            <button class="shad-btn-primary" id="confirmAddBtn">
+                                <i data-lucide="check" class="icon-14"></i>
+                                添加
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </main>
+        </div>
+    </div>
+
+    <script src="/static/shell.js" defer></script>
+    <script>
+    (function () {
+        'use strict';
+
+        function tauriInvoke(cmd, args) {
+            if (window.__TAURI__ && window.__TAURI__.core) {
+                return window.__TAURI__.core.invoke(cmd, args || {});
+            }
+            if (window.__TAURI_INTERNALS__) {
+                return window.__TAURI_INTERNALS__.invoke(cmd, args || {});
+            }
+            return Promise.reject(new Error('Tauri not available'));
+        }
+
+        // ── State ──
+        let models = [];       // full models (with real keys, for save)
+        let maskedModels = []; // display models (keys masked)
+
+        // ── Load ──
+        async function loadModels() {
+            try {
+                maskedModels = await tauriInvoke('get_llm_models');
+                renderModels();
+            } catch (e) {
+                console.error('加载模型列表失败:', e);
+            }
+        }
+
+        function renderModels() {
+            const list = document.getElementById('modelList');
+            const countEl = document.getElementById('poolCount');
+            if (!list) return;
+
+            const enabledCount = maskedModels.filter(m => m.enabled).length;
+            if (countEl) countEl.textContent = `${enabledCount} 个启用 / ${maskedModels.length} 个总计`;
+
+            if (maskedModels.length === 0) {
+                list.innerHTML = `
+                    <div class="empty-state">
+                        <i data-lucide="bot" style="width:48px;height:48px;"></i>
+                        <p>尚未配置任何模型</p>
+                        <p style="font-size:0.8rem;">点击下方按钮添加你的第一个 LLM 模型</p>
+                    </div>`;
+                if (window.lucide) lucide.createIcons({ nodes: [list] });
+                return;
+            }
+
+            list.innerHTML = maskedModels.map((m, i) => `
+                <div class="model-card" data-index="${i}">
+                    <div class="model-card-header">
+                        <div class="model-card-info">
+                            <div class="model-card-name">
+                                <span class="status-dot ${m.enabled ? 'online' : 'offline'}"></span>
+                                ${escapeHtml(m.name)}
+                            </div>
+                            <div class="model-card-detail">
+                                <span><code>${escapeHtml(m.model)}</code></span>
+                                <span>${escapeHtml(m.api_base)}</span>
+                                <span>Key: ${escapeHtml(m.api_key_masked)}</span>
+                            </div>
+                        </div>
+                        <div class="model-card-actions">
+                            <button class="shad-btn-ghost test-btn" data-index="${i}" title="测试连接">
+                                <i data-lucide="play" class="icon-14"></i>
+                            </button>
+                            <div class="toggle-switch ${m.enabled ? 'active' : ''}" data-index="${i}" title="${m.enabled ? '点击禁用' : '点击启用'}"></div>
+                            <button class="shad-btn-ghost delete-btn" data-index="${i}" title="删除" style="color:var(--destructive);">
+                                <i data-lucide="trash-2" class="icon-14"></i>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            `).join('');
+
+            if (window.lucide) lucide.createIcons({ nodes: [list] });
+            bindCardEvents();
+        }
+
+        function bindCardEvents() {
+            // Test buttons
+            document.querySelectorAll('.test-btn').forEach(btn => {
+                btn.addEventListener('click', () => testModel(parseInt(btn.dataset.index)));
+            });
+
+            // Toggle switches
+            document.querySelectorAll('.toggle-switch').forEach(sw => {
+                sw.addEventListener('click', () => toggleModel(parseInt(sw.dataset.index)));
+            });
+
+            // Delete buttons
+            document.querySelectorAll('.delete-btn').forEach(btn => {
+                btn.addEventListener('click', () => deleteModel(parseInt(btn.dataset.index)));
+            });
+        }
+
+        // ── Test ──
+        async function testModel(index) {
+            const m = maskedModels[index];
+            if (!m) return;
+
+            // We need the real key — prompt user or re-enter
+            const realKey = prompt(`请输入 "${m.name}" 的完整 API Key 以测试连接:`, '');
+            if (!realKey) return;
+
+            // Show testing state
+            const dot = document.querySelector(`.model-card[data-index="${index}"] .status-dot`);
+            if (dot) { dot.className = 'status-dot testing'; }
+
+            try {
+                const result = await tauriInvoke('test_llm_model', {
+                    model: {
+                        name: m.name,
+                        provider: m.provider,
+                        api_key: realKey,
+                        api_base: m.api_base,
+                        model: m.model,
+                        enabled: m.enabled
+                    }
+                });
+                if (result.success) {
+                    showToast(`✅ ${m.model} 连接成功: ${result.reply}`, 'success');
+                    if (dot) dot.className = 'status-dot online';
+                } else {
+                    showToast(`❌ ${m.model} 连接失败: ${result.error}`, 'error');
+                    if (dot) dot.className = 'status-dot offline';
+                }
+            } catch (e) {
+                showToast(`❌ 测试异常: ${e}`, 'error');
+                if (dot) dot.className = 'status-dot offline';
+            }
+        }
+
+        // ── Toggle ──
+        async function toggleModel(index) {
+            try {
+                // Load full models, toggle, save
+                const fullModels = await loadFullModels();
+                if (index < fullModels.length) {
+                    fullModels[index].enabled = !fullModels[index].enabled;
+                    await tauriInvoke('save_llm_models', { models: fullModels });
+                    await loadModels();
+                }
+            } catch (e) {
+                showToast(`操作失败: ${e}`, 'error');
+            }
+        }
+
+        // ── Delete ──
+        async function deleteModel(index) {
+            const m = maskedModels[index];
+            if (!m) return;
+            if (!confirm(`确定删除模型 "${m.name}" (${m.model})？`)) return;
+
+            try {
+                await tauriInvoke('delete_llm_model', { index });
+                await loadModels();
+                showToast(`已删除: ${m.name}`, 'success');
+            } catch (e) {
+                showToast(`删除失败: ${e}`, 'error');
+            }
+        }
+
+        // ── Add ──
+        function showAddForm() {
+            document.getElementById('addForm').classList.add('visible');
+            document.getElementById('addModelBtn').style.display = 'none';
+            document.getElementById('newName').focus();
+        }
+
+        function hideAddForm() {
+            document.getElementById('addForm').classList.remove('visible');
+            document.getElementById('addModelBtn').style.display = '';
+            // Clear form
+            ['newName', 'newApiBase', 'newApiKey', 'newModel'].forEach(id => {
+                document.getElementById(id).value = '';
+            });
+            document.getElementById('newProvider').value = 'custom';
+        }
+
+        async function confirmAdd() {
+            const name = document.getElementById('newName').value.trim();
+            const provider = document.getElementById('newProvider').value;
+            const apiBase = document.getElementById('newApiBase').value.trim();
+            const apiKey = document.getElementById('newApiKey').value.trim();
+            const model = document.getElementById('newModel').value.trim();
+
+            if (!name || !apiBase || !apiKey || !model) {
+                showToast('请填写所有字段', 'error');
+                return;
+            }
+
+            try {
+                const fullModels = await loadFullModels();
+                fullModels.push({
+                    name,
+                    provider,
+                    api_key: apiKey,
+                    api_base: apiBase,
+                    model,
+                    enabled: true
+                });
+                await tauriInvoke('save_llm_models', { models: fullModels });
+                hideAddForm();
+                await loadModels();
+                showToast(`已添加: ${name}`, 'success');
+            } catch (e) {
+                showToast(`添加失败: ${e}`, 'error');
+            }
+        }
+
+        // ── Helpers ──
+
+        // Load full models (with real keys) for toggle/add operations
+        async function loadFullModels() {
+            try {
+                return await tauriInvoke('get_llm_models_raw');
+            } catch (e) {
+                console.error('加载完整模型列表失败:', e);
+                return [];
+            }
+        }
+
+        function showToast(message, type) {
+            const toast = document.createElement('div');
+            toast.className = `test-toast ${type}`;
+            toast.textContent = message;
+            document.body.appendChild(toast);
+            setTimeout(() => toast.remove(), 4000);
+        }
+
+        function escapeHtml(str) {
+            if (!str) return '';
+            const div = document.createElement('div');
+            div.textContent = str;
+            return div.innerHTML;
+        }
+
+        // ── Init ──
+        document.addEventListener('DOMContentLoaded', () => {
+            document.getElementById('addModelBtn').addEventListener('click', showAddForm);
+            document.getElementById('cancelAddBtn').addEventListener('click', hideAddForm);
+            document.getElementById('confirmAddBtn').addEventListener('click', confirmAdd);
+
+            loadModels();
+            if (window.lucide) setTimeout(() => lucide.createIcons(), 100);
+        });
+    })();
+    </script>
+</body>
+</html>

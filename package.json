@@ -1,0 +1,24 @@
+{
+  "name": "doc-reader",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.10.1",
+    "@tauri-apps/cli": "^2.10.1"
+  },
+  "devDependencies": {
+    "esbuild": "^0.27.4",
+    "heti": "^0.9.6",
+    "highlight.js": "^11.11.1",
+    "katex": "^0.16.38",
+    "lucide": "^0.577.0",
+    "marked": "^17.0.4",
+    "vite": "^8.0.0"
+  }
+}
