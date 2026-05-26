@@ -18,6 +18,10 @@ src-tauri/.env
 
 # Rust / Tauri
 src-tauri/target/
+# Tauri 自动生成的 Android 工程（init 时会重建）
+src-tauri/gen/
+# Android 签名 keystore + 密码（机密，绝不入仓）
+src-tauri/keys/
 
 # Editor directories and files
 .vscode/*
@@ -30,6 +34,33 @@ src-tauri/target/
 *.sln
 *.sw?
 
+# AI / 编辑器辅助工作目录（仅本地）
+.windsurf/
+.superdesign/
+.claude/
+.kiro/
+
 # Misc
 nul
 _backup_before_layout_redesign/
+_legacy/
+
+# Backups
+*.bak
+
+# Release artifacts (do not track binary APKs / installers)
+*.apk
+*.apk.idsig
+doc-reader-setup.exe
+doc-reader-setup.msi
+
+# 个人草稿 / 备忘 / 课程作业（不入公共仓）
+TABLET_DESIGN.md
+progress.txt
+软件需求分析作业/
+
+# TypeScript 增量编译缓存
+tsconfig.tsbuildinfo
+
+# pdfjs-dist 运行时（由 scripts/copy-pdfjs-assets.mjs 生成）
+public/pdfjs/
