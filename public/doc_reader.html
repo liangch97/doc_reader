@@ -244,7 +244,7 @@
     .nb-preview-panel { border-top: 1px solid var(--border); max-height: 45%; display: flex; flex-direction: column; animation: fadeIn 200ms ease; flex-shrink: 0; }
     .nb-preview-header { display: flex; align-items: center; justify-content: space-between; padding: 8px 12px; border-bottom: 1px solid var(--border-light); flex-shrink: 0; }
     .nb-preview-title { font-size: 13px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
-    .nb-preview-body { flex: 1; overflow-y: auto; padding: 12px; scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+    .nb-preview-body { flex: 1; min-height: 0; overflow-y: auto; padding: 12px; scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
 
     /* ── Color Picker ─────────────────────────────────────────────── */
     .nb-color-picker { display: flex; gap: 8px; flex-wrap: wrap; }
@@ -591,8 +591,8 @@
                 <button class="tool-btn" id="nbPreviewZoomIn" title="放大" style="width:24px;height:24px;">
                   <i data-lucide="plus" style="width:12px;height:12px"></i>
                 </button>
-                <button class="tool-btn" id="nbPreviewEditBtn" title="编辑" style="width:24px;height:24px;">
-                  <i data-lucide="pencil" style="width:12px;height:12px"></i>
+                <button class="tool-btn" id="nbPreviewOutlineBtn" title="展开或折叠知识目录" style="width:24px;height:24px;">
+                  <i data-lucide="panel-right-open" style="width:12px;height:12px"></i>
                 </button>
                 <button class="tool-btn" id="nbPreviewCloseBtn" title="关闭预览" style="width:24px;height:24px;">
                   <i data-lucide="x" style="width:12px;height:12px"></i>

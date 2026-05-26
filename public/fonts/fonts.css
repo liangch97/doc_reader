@@ -1,0 +1,70 @@
+/*
+ * 平板端阅读字体 vendor 入口（TABLET_DESIGN.md §5）
+ *
+ * 2026-05 修订：原先用 url('/fonts/Xxx.woff2') 引用本地 woff2，但 woff2 文件
+ * 没有 bundle 进发布包；Tauri 的 SPA fallback 会把 index.html 当作字体响应给
+ * 浏览器，浏览器一边 OTS parse 报错 `invalid sfntVersion` 一边 swap 回 fallback，
+ * 触发反复 reflow → PDF 容器宽度抖动。
+ *
+ * 现在的做法：**只用 local() 探测系统已安装字体**。
+ * 系统有思源 / 落霞孤鹜等字体的用户能直接命中；没有的用户走 family fallback
+ * 链（'Noto Serif SC', 'Songti SC', 'SimSun', serif 等），不再触发任何网络
+ * 请求，从根上消除 OTS 错误和抖动。
+ *
+ * 若以后真的把 woff2 打进 dist/fonts/，可以在 local() 之后追加 url(...)；
+ * `font-display: optional` 会保证最多探测一次、不影响首屏。
+ */
+
+@font-face {
+  font-family: 'Source Han Serif SC';
+  src: local('Source Han Serif SC'), local('SourceHanSerifSC'), local('Noto Serif CJK SC');
+  font-weight: 400;
+  font-style: normal;
+  font-display: optional;
+  unicode-range: U+0000-10FFFF;
+}
+
+@font-face {
+  font-family: 'Source Han Sans SC';
+  src: local('Source Han Sans SC'), local('SourceHanSansSC'), local('Noto Sans CJK SC');
+  font-weight: 400;
+  font-style: normal;
+  font-display: optional;
+  unicode-range: U+0000-10FFFF;
+}
+
+@font-face {
+  font-family: 'LXGW WenKai';
+  src: local('LXGW WenKai'), local('LXGWWenKai');
+  font-weight: 400;
+  font-style: normal;
+  font-display: optional;
+  unicode-range: U+0000-10FFFF;
+}
+
+@font-face {
+  font-family: 'LXGW Neo XiHei';
+  src: local('LXGW Neo XiHei'), local('LXGWNeoXiHei');
+  font-weight: 400;
+  font-style: normal;
+  font-display: optional;
+  unicode-range: U+0000-10FFFF;
+}
+
+@font-face {
+  font-family: 'Inter';
+  src: local('Inter');
+  font-weight: 400;
+  font-style: normal;
+  font-display: optional;
+  unicode-range: U+0000-024F, U+1E00-1EFF, U+2000-206F, U+20A0-20CF;
+}
+
+@font-face {
+  font-family: 'Crimson Pro';
+  src: local('Crimson Pro'), local('CrimsonPro');
+  font-weight: 400;
+  font-style: normal;
+  font-display: optional;
+  unicode-range: U+0000-024F, U+1E00-1EFF, U+2000-206F, U+20A0-20CF;
+}

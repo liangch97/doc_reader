@@ -1,6 +1,50 @@
 /// 文档解析器 — 支持 PDF / DOCX / PPTX / HTML 文本提取
 use std::io::{Cursor, Read};
+use std::panic::{catch_unwind, AssertUnwindSafe};
 use zip::ZipArchive;
+
+/// 调用 `pdf_extract::extract_text_from_mem`，把 panic / Err 收编为
+/// `Ok(String::new())`，便于上层走 lopdf fallback。
+///
+/// `pdf-extract` 0.7.12 对部分 CJK 嵌入字体（Identity-H 之外的 CMap）
+/// 会触发 `assert!(name == "Identity-H")` 直接 panic（src/lib.rs:942），
+/// 导致整个 tauri 进程退出（用户报告 STATUS_CONTROL_C_EXIT）。
+/// `catch_unwind` 拦下 panic；Err 情况（比如加密 PDF）也一视同仁当空处理，
+/// 让 `parse_pdf_pages` 的 lopdf 第二轮兜底能接上，保持 UI 看到正确页数。
+/// `data` 在 closure 中只读借用，pdf-extract 内部状态在 panic 后被丢弃，
+/// 不会污染外部，AssertUnwindSafe 是安全的。
+fn pdf_extract_text_safe(data: &[u8]) -> String {
+    let res = catch_unwind(AssertUnwindSafe(|| pdf_extract::extract_text_from_mem(data)));
+    match res {
+        Ok(Ok(t)) => t,
+        Ok(Err(e)) => {
+            eprintln!("[parser] pdf-extract returned Err: {e}; falling back");
+            String::new()
+        }
+        Err(_) => {
+            eprintln!(
+                "[parser] pdf-extract panicked (likely non-Identity-H CJK font); falling back"
+            );
+            String::new()
+        }
+    }
+}
+
+/// 用 lopdf 按页抽取文本，全部失败时返回空字符串。
+///
+/// 作为 `pdf-extract` 的 fallback：lopdf 是纯 Rust，对嵌入 CMap 更宽容，
+/// 但它无法解 Type3 / 某些 CID 字体——所以即便 lopdf 也抽不出来，也要让
+/// 上层生成一条空占位 page，UI 不会漏页。
+///
+/// 为什么用 panic guard：`Document::extract_text` 内部调 `decode_text`，
+/// 遇到非法 bytes 可能 unwrap 失败或 panic，历史版本出过类似问题。
+fn lopdf_extract_page_safe(doc: &lopdf::Document, page_num_1based: u32) -> String {
+    let res = catch_unwind(AssertUnwindSafe(|| doc.extract_text(&[page_num_1based])));
+    match res {
+        Ok(Ok(t)) => t,
+        Ok(Err(_)) | Err(_) => String::new(),
+    }
+}
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ParsedDocument {
@@ -78,8 +122,21 @@ fn stem(filename: &str) -> String {
 // ── PDF ──────────────────────────────────────────────────────────────────────
 
 fn parse_pdf(filename: &str, data: &[u8]) -> Result<ParsedDocument, String> {
-    let text = pdf_extract::extract_text_from_mem(data)
-        .map_err(|e| format!("PDF 解析失败: {e}"))?;
+    let mut text = pdf_extract_text_safe(data);
+    // pdf-extract 抽到空时（panic / CMap 兼容性问题），用 lopdf 整本兜底
+    if text.trim().is_empty() {
+        if let Ok(doc) = lopdf::Document::load_mem(data) {
+            let mut out = String::new();
+            for pn in 1..=doc.get_pages().len() as u32 {
+                let page_text = lopdf_extract_page_safe(&doc, pn);
+                if !page_text.trim().is_empty() {
+                    out.push_str(&page_text);
+                    out.push('\n');
+                }
+            }
+            text = out;
+        }
+    }
     let content = clean_text(&text);
     Ok(ParsedDocument {
         title: stem(filename),
@@ -282,67 +339,55 @@ fn clean_text(text: &str) -> String {
 // ── PDF 按页 ─────────────────────────────────────────────────────────────────
 
 fn parse_pdf_pages(filename: &str, data: &[u8]) -> Result<ParsedDocumentPages, String> {
-    // 1. 用 lopdf 获取 PDF 真实页数
+    // 1. lopdf 获取 PDF 真实页数——这步若失败直接报错（文件不是合法 PDF）
     let pdf_doc = lopdf::Document::load_mem(data)
         .map_err(|e| format!("PDF 页数读取失败: {e}"))?;
     let real_page_count = pdf_doc.get_pages().len();
 
-    // 2. 用 pdf-extract 提取全文
-    let text = pdf_extract::extract_text_from_mem(data)
-        .map_err(|e| format!("PDF 解析失败: {e}"))?;
+    // 2. 先尝试 pdf-extract 全文抽取（有 form-feed 天然分页，多数 PDF 效果好）
+    //    注意：不过滤空段、不 trim——必须保留 form-feed 间所有段，否则页索引会整体错位。
+    let text = pdf_extract_text_safe(data);
+    let ff_pages: Vec<String> = text.split('\x0c').map(clean_text).collect();
 
-    // 3. 尝试按 form-feed (\x0c) 分页
-    let raw_pages: Vec<&str> = text.split('\x0c').collect();
-    let ff_pages: Vec<String> = raw_pages
-        .iter()
-        .map(|p| clean_text(p))
-        .filter(|p| !p.trim().is_empty())
-        .collect();
-
-    // 4. 决定最终分页策略
-    let page_count = if ff_pages.len() >= real_page_count && real_page_count > 0 {
-        // form-feed 分页数 >= 真实页数，使用 form-feed 分页
-        real_page_count
-    } else if real_page_count > 1 {
-        // form-feed 分页失败，按真实页数均匀切分文本
-        real_page_count
-    } else {
-        1
-    };
-
-    let pages: Vec<ParsedPage> = if ff_pages.len() >= page_count && page_count > 0 {
-        // form-feed 分页足够；当段数 > 页数时，多余的通常是开头的
-        // 元数据/头部文本，跳过它们以保持与 pdf.js 页面对齐
-        let skip = ff_pages.len() - page_count;
-        ff_pages.into_iter().skip(skip).enumerate()
+    // 3. 三级分页策略（优先级从高到低）：
+    //    a) pdf-extract 的 form-feed 段数 **恰好等于** real_page_count → 一一对齐
+    //       （宽松一点：相差 1 时大概率是末尾多/少一个空段，也可对齐；
+    //         更大偏差说明 form-feed 不可靠，走 b）
+    //    b) form-feed 不可靠 → 用 lopdf 按页单独抽（对 CJK 嵌入字体更宽容）
+    //    c) lopdf 也抽不出 → 生成 real_page_count 条空占位，索引仍对齐
+    //
+    // 旧实现用 `skip = ff_pages.len() - real_page_count` 从开头跳段，对于
+    // 中间出现额外 form-feed 的 PDF 会让所有靠后页内容整体前移 → AI 看到的
+    // 「当前页内容」其实是下一两页的，必须废弃。
+    let pages: Vec<ParsedPage> = if real_page_count > 0
+        && ff_pages.len() >= real_page_count
+        && ff_pages.len() <= real_page_count + 1
+    {
+        // a) form-feed 段数与真实页数严格对齐（允许末尾多一个空段）
+        ff_pages
+            .into_iter()
+            .take(real_page_count)
+            .enumerate()
             .map(|(i, content)| make_page(i, content))
             .collect()
-    } else if page_count > 1 {
-        // 按真实页数均匀切分全文
-        let cleaned = clean_text(&text);
-        let chars: Vec<char> = cleaned.chars().collect();
-        let chunk_size = (chars.len() + page_count - 1) / page_count; // 向上取整
-        let mut result = Vec::new();
-        for i in 0..page_count {
-            let start = i * chunk_size;
-            let end = std::cmp::min(start + chunk_size, chars.len());
-            if start < chars.len() {
-                let content: String = chars[start..end].iter().collect();
-                if !content.trim().is_empty() {
-                    result.push(make_page(i, content));
-                }
-            }
-        }
-        if result.is_empty() {
-            vec![make_page(0, clean_text(&text))]
-        } else {
-            result
-        }
+    } else if real_page_count > 0 {
+        // b) / c) lopdf 按页抽，失败就空占位
+        (0..real_page_count)
+            .map(|i| {
+                let page_text = lopdf_extract_page_safe(&pdf_doc, (i + 1) as u32);
+                make_page(i, clean_text(&page_text))
+            })
+            .collect()
     } else {
+        // 真实页数为 0（极少见），用全文当一页兜底
         vec![make_page(0, clean_text(&text))]
     };
 
-    let full_content = pages.iter().map(|p| p.content.as_str()).collect::<Vec<_>>().join("\n\n");
+    let full_content = pages
+        .iter()
+        .map(|p| p.content.as_str())
+        .collect::<Vec<_>>()
+        .join("\n\n");
     Ok(ParsedDocumentPages {
         title: stem(filename),
         pages,

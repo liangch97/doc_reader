@@ -1,0 +1,2262 @@
+/* ────────────────────────────────────────────────────────────────────────
+   MarkdownView 主题表 v2 — 视觉精修
+   作用域：所有 .md-root 内的渲染节点
+   切换：父级附加 .md-theme-{id}
+   ──────────────────────────────────────────────────────────────────────── */
+
+/* ════════════════════════════════════════════════════════════════════════
+   基础（所有主题共享） — 排版骨架
+   ════════════════════════════════════════════════════════════════════════ */
+.md-root {
+  color: var(--text-1);
+  font-size: 14.5px;
+  line-height: 1.75;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+  font-feature-settings: 'kern', 'liga', 'calt';
+  text-rendering: optimizeLegibility;
+}
+
+.md-root > *:first-child { margin-top: 0; }
+.md-root > *:last-child  { margin-bottom: 0; }
+
+.md-root h1, .md-root h2, .md-root h3,
+.md-root h4, .md-root h5, .md-root h6 {
+  color: var(--text-1);
+  font-weight: 650;
+  line-height: 1.3;
+  margin: 1.5em 0 0.6em;
+  scroll-margin-top: 1em;
+}
+.md-root h1 { font-size: 1.65em; }
+.md-root h2 { font-size: 1.35em; padding-bottom: 0.25em; border-bottom: 1px solid var(--border-1); }
+.md-root h3 { font-size: 1.18em; }
+.md-root h4 { font-size: 1.05em; }
+.md-root h5, .md-root h6 { font-size: 1em; color: var(--text-2); }
+
+.md-root p { margin: 0.7em 0; }
+
+.md-root strong { color: var(--text-1); font-weight: 650; }
+.md-root em     { color: var(--text-1); font-style: italic; }
+.md-root del    { color: var(--text-3); }
+.md-root mark,
+.milkdown mark   {
+  background: linear-gradient(transparent 55%, rgba(250, 204, 21, 0.55) 55%);
+  color: inherit;
+  padding: 0 .12em;
+  border-radius: 2px;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+[data-theme="dark"] .md-root mark,
+[data-theme="dark"] .milkdown mark {
+  background: linear-gradient(transparent 55%, rgba(253, 224, 71, 0.40) 55%);
+}
+
+/* ProseMirror decoration: `==xxx==` 实时高亮 —— 中间黄底，两端 `==` 完全不可见 */
+.milkdown .md-hl-text {
+  background: linear-gradient(transparent 55%, rgba(250, 204, 21, 0.55) 55%);
+  border-radius: 2px;
+  padding: 0 .05em;
+}
+[data-theme="dark"] .milkdown .md-hl-text {
+  background: linear-gradient(transparent 55%, rgba(253, 224, 71, 0.40) 55%);
+}
+/* 隐藏 `==` 标记字符（仍占字符位置以便光标编辑，但视觉零尺寸） */
+.milkdown .md-hl-marker {
+  font-size: 0;
+  letter-spacing: 0;
+  color: transparent;
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   Milkdown 编辑器（即时编辑/即时渲染）排版 —— 与 .md-root 阅读视图对齐
+   覆盖 Crepe 默认偏小字号，提升长文阅读编辑体验
+   ════════════════════════════════════════════════════════════════════════ */
+.milkdown {
+  /* Crepe 默认字体；当 NotesSettingsPopover 注入 --notes-font-family 时被覆盖。 */
+  --crepe-font-default: var(--notes-font-family, 'Inter', -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif);
+  --crepe-font-title: var(--notes-font-family, 'Inter', -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif);
+  --crepe-font-code: 'JetBrains Mono', 'Fira Code', Consolas, Menlo, monospace;
+  color: var(--text-1);
+  font-family: var(--notes-font-family, inherit);
+  font-size: var(--notes-font-size, 16px);
+  line-height: var(--notes-line-height, 1.85);
+  letter-spacing: var(--notes-letter-spacing, 0);
+  /* 关键：Crepe frame 主题给 .milkdown 设了自带 background（surface 色），
+     与外侧 NotebookPage `bg-surface-1` 不一致，造成"中间笔记区比四周
+     深一格"的色差。强制透明继承父级背景，色差消失。 */
+  background: transparent !important;
+}
+.milkdown .ProseMirror {
+  color: var(--text-1);
+  font-family: var(--notes-font-family, inherit);
+  font-size: var(--notes-font-size, 16px);
+  line-height: var(--notes-line-height, 1.85);
+  letter-spacing: var(--notes-letter-spacing, 0);
+  /* Crepe 默认 reset.css 给 ProseMirror 加了 60px 120px 的内边距，
+     在窄栏（右侧笔记面板）会把内容挤到无法阅读，必须强制覆盖。 */
+  padding: 0 !important;
+  background: transparent !important;
+  outline: none;
+}
+.milkdown .ProseMirror p {
+  margin: 0.7em 0;
+  font-size: var(--notes-font-size, 16px);
+  line-height: var(--notes-line-height, 1.85);
+  letter-spacing: var(--notes-letter-spacing, 0);
+}
+/* md-root（只读 MarkdownView）也消费同一组变量，让阅读视图与编辑视图在
+   同一字号 / 行距 / 字间距下完全对齐。 */
+.md-root {
+  font-family: var(--notes-font-family, inherit);
+  font-size: var(--notes-font-size, inherit);
+  line-height: var(--notes-line-height, inherit);
+  letter-spacing: var(--notes-letter-spacing, 0);
+}
+.milkdown .ProseMirror h1 { font-size: 1.95em; font-weight: 700; line-height: 1.25; margin: 1.4em 0 0.55em; }
+.milkdown .ProseMirror h2 { font-size: 1.55em; font-weight: 650; line-height: 1.3; margin: 1.4em 0 0.55em; padding-bottom: 0.25em; border-bottom: 1px solid var(--border-1); }
+
+/* CodeMirror 代码块（Crepe 默认特性）：强制等宽 + tabular-nums + 关闭连字，
+   让 AI 生成的 ASCII 框线 / 流程图列对齐 */
+.milkdown .ProseMirror .cm-editor,
+.milkdown .ProseMirror .cm-content,
+.milkdown .ProseMirror .cm-line {
+  font-family: var(--crepe-font-code), 'Cascadia Mono', Consolas, 'Courier New', monospace !important;
+  font-variant-numeric: tabular-nums !important;
+  font-feature-settings: 'liga' 0, 'calt' 0 !important;
+  tab-size: 4;
+}
+.milkdown .ProseMirror h3 { font-size: 1.18em; font-weight: 650; line-height: 1.3; margin: 1.3em 0 0.5em; }
+.milkdown .ProseMirror h4 { font-size: 1.05em; font-weight: 650; line-height: 1.3; margin: 1.2em 0 0.45em; }
+.milkdown .ProseMirror h5,
+.milkdown .ProseMirror h6 { font-size: 1em; font-weight: 600; color: var(--text-2); margin: 1.1em 0 0.4em; }
+.milkdown .ProseMirror ul,
+.milkdown .ProseMirror ol { padding-left: 1.5em; margin: 0.7em 0; }
+.milkdown .ProseMirror li { margin: 0.3em 0; }
+.milkdown .ProseMirror blockquote {
+  margin: 1em 0;
+  padding: 0.6em 1.1em;
+  color: var(--text-2);
+  background: var(--surface-1);
+  border-left: 3px solid var(--accent);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+}
+.milkdown .ProseMirror :not(pre) > code {
+  font-family: var(--crepe-font-code);
+  font-size: 0.86em;
+  background: var(--surface-2);
+  padding: 0.12em 0.42em;
+  border-radius: 4px;
+  color: var(--accent);
+}
+.milkdown .ProseMirror pre {
+  margin: 1em 0;
+  padding: 0.95em 1.1em;
+  background: var(--surface-1);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-md);
+  overflow-x: auto;
+  font-size: 0.86em;
+  line-height: 1.6;
+  font-family: var(--crepe-font-code);
+  /* ASCII art / 箱线字符（┌─┐│└┘）依赖严格的列对齐：禁止换行，只在 x 轴出滚动条
+     —— 必须显式声明，CodeMirror feature 关闭后默认的 ProseMirror code_block 不会自带 */
+  white-space: pre;
+  word-break: normal;
+  overflow-wrap: normal;
+  tab-size: 4;
+  font-feature-settings: 'liga' 0;
+  /* 用 ch + variant-numeric tabular-nums 保证宽字符等宽 */
+  font-variant-numeric: tabular-nums;
+}
+.milkdown .ProseMirror pre > code {
+  font-family: inherit;
+  background: transparent;
+  padding: 0;
+  white-space: inherit;
+  color: var(--text-1);
+  font-feature-settings: 'liga' 0;
+}
+.milkdown .ProseMirror hr {
+  border: 0;
+  border-top: 1px solid var(--border-1);
+  margin: 1.6em 0;
+}
+.milkdown .ProseMirror a {
+  color: var(--accent);
+  text-decoration: none;
+  border-bottom: 1px dashed currentColor;
+}
+.milkdown .ProseMirror a:hover { color: var(--accent-2); }
+.milkdown .ProseMirror table {
+  border-collapse: collapse;
+  margin: 1em 0;
+  font-size: 0.95em;
+}
+.milkdown .ProseMirror th,
+.milkdown .ProseMirror td {
+  border: 1px solid var(--border-1);
+  padding: 0.5em 0.85em;
+  text-align: left;
+}
+.milkdown .ProseMirror th { background: var(--surface-1); font-weight: 600; }
+
+/* ────────────────────────────────────────────────────────────────────────
+   Compact 修饰：窄栏（如 AI Pane / sidebar 笔记）紧凑字号 + 紧凑间距
+   设计原则：14px 字号 / 1.55 行高 / 首末元素零 margin / 标题间距贴近 0.4em
+   ──────────────────────────────────────────────────────────────────────── */
+.md-compact.milkdown,
+.md-compact .milkdown,
+.md-compact .milkdown .ProseMirror,
+.md-compact .milkdown .ProseMirror p {
+  font-size: 14px;
+  line-height: 1.55;
+}
+.md-compact .milkdown .ProseMirror p { margin: 0.35em 0; }
+/* 关键：第一个/最后一个元素不留 margin，避免容器顶部 / 底部多余空白 */
+.md-compact .milkdown .ProseMirror > *:first-child { margin-top: 0 !important; }
+.md-compact .milkdown .ProseMirror > *:last-child  { margin-bottom: 0 !important; }
+.md-compact .milkdown .ProseMirror h1 {
+  font-size: 1.32em;
+  margin: 0.5em 0 0.25em;
+  padding-bottom: 0.15em;
+  border-bottom: 1px solid var(--border-1);
+  line-height: 1.25;
+}
+.md-compact .milkdown .ProseMirror h2 {
+  font-size: 1.16em;
+  margin: 0.45em 0 0.22em;
+  padding-bottom: 0;
+  border-bottom: 0;
+  line-height: 1.25;
+}
+.md-compact .milkdown .ProseMirror h3 { font-size: 1.05em; margin: 0.4em 0 0.2em; line-height: 1.25; }
+.md-compact .milkdown .ProseMirror h4 { font-size: 1em; margin: 0.4em 0 0.18em; line-height: 1.25; }
+.md-compact .milkdown .ProseMirror h5,
+.md-compact .milkdown .ProseMirror h6 { font-size: 0.95em; margin: 0.35em 0 0.15em; line-height: 1.25; }
+.md-compact .milkdown .ProseMirror ul,
+.md-compact .milkdown .ProseMirror ol { padding-left: 1.15em; margin: 0.3em 0; }
+.md-compact .milkdown .ProseMirror li { margin: 0.1em 0; }
+.md-compact .milkdown .ProseMirror li > p { margin: 0.1em 0; }
+.md-compact .milkdown .ProseMirror blockquote { margin: 0.45em 0; padding: 0.35em 0.7em; }
+.md-compact .milkdown .ProseMirror pre { margin: 0.45em 0; padding: 0.55em 0.7em; font-size: 12.5px; }
+.md-compact .milkdown .ProseMirror hr { margin: 0.7em 0; }
+.md-compact .milkdown .ProseMirror table { margin: 0.45em 0; font-size: 0.92em; }
+.md-compact .milkdown .ProseMirror th,
+.md-compact .milkdown .ProseMirror td { padding: 0.32em 0.55em; }
+
+.md-root a {
+  color: var(--accent);
+  text-decoration: none;
+  border-bottom: 1px dashed currentColor;
+  transition: color .15s, border-color .15s;
+}
+.md-root a:hover { color: var(--accent-2); border-bottom-style: solid; }
+
+.md-root ul, .md-root ol { padding-left: 1.5em; margin: 0.7em 0; }
+.md-root li { margin: 0.3em 0; }
+.md-root li > p { margin: 0.3em 0; }
+.md-root li::marker { color: var(--text-3); }
+
+.md-root input[type='checkbox'] { margin-right: 0.4em; accent-color: var(--accent); }
+
+/* 引用块 */
+.md-root blockquote {
+  margin: 1em 0;
+  padding: 0.6em 1.1em;
+  color: var(--text-2);
+  background: var(--surface-1);
+  border-left: 3px solid var(--accent);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+}
+.md-root blockquote > *:first-child { margin-top: 0; }
+.md-root blockquote > *:last-child  { margin-bottom: 0; }
+
+/* 表格 */
+.md-root table {
+  border-collapse: collapse;
+  margin: 1em 0;
+  font-size: 0.95em;
+  display: block;
+  overflow-x: auto;
+  max-width: 100%;
+}
+.md-root th, .md-root td {
+  border: 1px solid var(--border-1);
+  padding: 0.5em 0.85em;
+  text-align: left;
+}
+.md-root th { background: var(--surface-1); font-weight: 600; }
+.md-root tr:nth-child(2n) td { background: var(--surface-1); }
+
+/* 内联代码 */
+.md-root :not(pre) > code {
+  font-family: 'JetBrains Mono', 'Fira Code', Consolas, Menlo, monospace;
+  font-size: 0.86em;
+  background: var(--surface-2);
+  padding: 0.12em 0.42em;
+  border-radius: 4px;
+  color: var(--accent-2);
+  font-feature-settings: 'liga' 0;
+}
+
+/* 代码块 */
+.md-root pre {
+  margin: 1em 0;
+  padding: 0.95em 1.1em;
+  background: var(--surface-1);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-md);
+  overflow-x: auto;
+  font-size: 0.86em;
+  line-height: 1.6;
+  /* ASCII art / 箱线字符（┌─┐│└┘）依赖严格的列对齐：禁止换行，只在 x 轴出滚动条 */
+  white-space: pre;
+  word-break: normal;
+  overflow-wrap: normal;
+  tab-size: 4;
+}
+.md-root pre code {
+  font-family: 'JetBrains Mono', 'Fira Code', Consolas, Menlo, monospace;
+  background: transparent;
+  padding: 0;
+  color: var(--text-1);
+  font-feature-settings: 'liga' 0;
+  white-space: inherit;
+}
+
+/* 水平线 */
+.md-root hr {
+  border: 0;
+  border-top: 1px solid var(--border-1);
+  margin: 1.8em 0;
+}
+
+/* 图片 */
+.md-root img {
+  max-width: 100%;
+  border-radius: var(--radius-md);
+  display: block;
+  margin: 1em auto;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.06);
+}
+
+/* KaTeX */
+.md-root .katex { font-size: 1.05em; }
+.md-root .katex-display {
+  margin: 1.1em 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 0.4em 0;
+}
+
+/* highlight.js 暗色覆盖 */
+:root[data-theme='dark'] .md-root pre code.hljs,
+:root[data-theme='dark'] .md-root pre {
+  background: #161b22;
+  color: #e6edf3;
+}
+:root[data-theme='dark'] .md-root .hljs-keyword,
+:root[data-theme='dark'] .md-root .hljs-selector-tag,
+:root[data-theme='dark'] .md-root .hljs-tag { color: #ff7b72; }
+:root[data-theme='dark'] .md-root .hljs-string,
+:root[data-theme='dark'] .md-root .hljs-attr { color: #a5d6ff; }
+:root[data-theme='dark'] .md-root .hljs-number,
+:root[data-theme='dark'] .md-root .hljs-literal { color: #79c0ff; }
+:root[data-theme='dark'] .md-root .hljs-comment { color: #8b949e; font-style: italic; }
+:root[data-theme='dark'] .md-root .hljs-function .hljs-title,
+:root[data-theme='dark'] .md-root .hljs-title { color: #d2a8ff; }
+:root[data-theme='dark'] .md-root .hljs-built_in,
+:root[data-theme='dark'] .md-root .hljs-type { color: #ffa657; }
+
+/* ════════════════════════════════════════════════════════════════════════
+   主题：default — 紧凑无衬线，柔和卡片感
+   ════════════════════════════════════════════════════════════════════════ */
+.md-theme-default {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+}
+.md-theme-default h1 { letter-spacing: -0.01em; }
+.md-theme-default h2 { letter-spacing: -0.005em; }
+
+/* ════════════════════════════════════════════════════════════════════════
+   主题：github — GitHub README 风
+   ════════════════════════════════════════════════════════════════════════ */
+.md-theme-github {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', 'PingFang SC', sans-serif;
+  font-size: 14.5px;
+  line-height: 1.65;
+  --gh-fg: #1f2328;
+  --gh-fg-muted: #59636e;
+  --gh-border: #d1d9e0;
+  --gh-canvas-subtle: #f6f8fa;
+  --gh-accent: #0969da;
+  color: var(--gh-fg);
+}
+:root[data-theme='dark'] .md-theme-github {
+  --gh-fg: #e6edf3;
+  --gh-fg-muted: #9198a1;
+  --gh-border: #30363d;
+  --gh-canvas-subtle: #161b22;
+  --gh-accent: #58a6ff;
+  color: var(--gh-fg);
+}
+.md-theme-github h1,
+.md-theme-github h2 {
+  border-bottom: 1px solid var(--gh-border);
+  padding-bottom: 0.3em;
+  color: var(--gh-fg);
+}
+.md-theme-github h1 { font-size: 2em; font-weight: 600; }
+.md-theme-github h2 { font-size: 1.5em; font-weight: 600; }
+.md-theme-github h3 { font-size: 1.25em; font-weight: 600; color: var(--gh-fg); }
+.md-theme-github a { color: var(--gh-accent); border-bottom: 0; }
+.md-theme-github a:hover { text-decoration: underline; }
+.md-theme-github blockquote {
+  border-left: 4px solid var(--gh-border);
+  background: transparent;
+  color: var(--gh-fg-muted);
+  padding: 0 1em;
+  border-radius: 0;
+}
+.md-theme-github :not(pre) > code {
+  background: rgba(175, 184, 193, 0.2);
+  color: var(--gh-fg);
+  border-radius: 6px;
+  padding: 0.2em 0.4em;
+}
+.md-theme-github pre {
+  background: var(--gh-canvas-subtle);
+  border: 0;
+  border-radius: 6px;
+}
+.md-theme-github table th,
+.md-theme-github table td { border: 1px solid var(--gh-border); }
+.md-theme-github table th { background: var(--gh-canvas-subtle); }
+.md-theme-github table tr:nth-child(2n) td { background: var(--gh-canvas-subtle); }
+
+/* ════════════════════════════════════════════════════════════════════════
+   主题：academic — 学术论文，宋体衬线，章节风格
+   ════════════════════════════════════════════════════════════════════════ */
+.md-theme-academic {
+  font-family: 'Source Serif 4', 'Source Serif Pro', 'Source Han Serif SC', 'Noto Serif SC', Georgia, 'Times New Roman', serif;
+  font-size: 16px;
+  line-height: 1.85;
+  text-align: justify;
+  hyphens: auto;
+  letter-spacing: 0.005em;
+  max-width: 70ch;
+  margin: 0 auto;
+}
+.md-theme-academic h1 {
+  text-align: center;
+  font-size: 1.7em;
+  font-weight: 700;
+  margin: 1.2em 0 1em;
+  letter-spacing: 0.05em;
+  border: 0;
+}
+.md-theme-academic h2 {
+  font-size: 1.25em;
+  font-weight: 700;
+  text-align: left;
+  border: 0;
+  margin: 1.6em 0 0.6em;
+  counter-increment: h2-counter;
+}
+.md-theme-academic { counter-reset: h2-counter; }
+.md-theme-academic h2::before {
+  content: counter(h2-counter) ". ";
+  color: var(--accent);
+}
+.md-theme-academic h3 {
+  font-size: 1.08em;
+  font-weight: 600;
+  font-style: italic;
+}
+.md-theme-academic p {
+  text-indent: 2em;
+  margin: 0.4em 0;
+}
+.md-theme-academic h1 + p,
+.md-theme-academic h2 + p,
+.md-theme-academic h3 + p,
+.md-theme-academic blockquote + p { text-indent: 0; }
+.md-theme-academic blockquote {
+  font-style: italic;
+  border-left: 2px solid var(--text-3);
+  background: transparent;
+  color: var(--text-2);
+  margin: 1.2em 2em;
+  padding: 0.3em 1em;
+}
+.md-theme-academic blockquote p { text-indent: 0; }
+.md-theme-academic li,
+.md-theme-academic li > p { text-indent: 0; }
+.md-theme-academic table { font-size: 0.9em; margin: 1.2em auto; }
+.md-theme-academic table caption { caption-side: top; font-style: italic; padding: 0.4em 0; }
+
+/* ════════════════════════════════════════════════════════════════════════
+   主题：typora — 柔和留白，阅读优先
+   ════════════════════════════════════════════════════════════════════════ */
+.md-theme-typora {
+  font-family: 'Inter', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  font-size: 15.5px;
+  line-height: 1.85;
+  letter-spacing: 0.01em;
+  max-width: 72ch;
+  margin: 0 auto;
+}
+.md-theme-typora h1 {
+  font-size: 1.8em;
+  font-weight: 600;
+  text-align: center;
+  border: 0;
+  margin: 1em 0 1.2em;
+  letter-spacing: -0.005em;
+}
+.md-theme-typora h2 {
+  font-size: 1.4em;
+  font-weight: 600;
+  border: 0;
+  margin: 1.7em 0 0.7em;
+}
+.md-theme-typora h3 { font-size: 1.18em; font-weight: 600; }
+.md-theme-typora p { margin: 1em 0; }
+.md-theme-typora blockquote {
+  background: transparent;
+  border-left: 4px solid var(--border-2);
+  color: var(--text-2);
+  padding: 0.5em 1.2em;
+}
+.md-theme-typora pre {
+  background: var(--bg);
+  border: 1px solid var(--border-1);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+}
+.md-theme-typora :not(pre) > code {
+  background: rgba(168, 168, 168, 0.18);
+  color: var(--text-1);
+}
+.md-theme-typora hr {
+  border-top: 0;
+  height: 14px;
+  background: radial-gradient(circle, var(--text-3) 1.5px, transparent 1.5px);
+  background-size: 14px 14px;
+  background-position: center;
+  background-repeat: repeat-x;
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   主题：heti — 中文专业排版
+   ════════════════════════════════════════════════════════════════════════ */
+.md-theme-heti {
+  font-family: 'Source Han Serif SC', 'Noto Serif SC', 'Songti SC', '宋体', 'STSong', Georgia, serif;
+  font-size: 17px;
+  line-height: 2;
+  text-align: justify;
+  letter-spacing: 0.02em;
+  max-width: 38em;
+  margin: 0 auto;
+  padding: 0.5em 0;
+}
+.md-theme-heti p {
+  text-indent: 2em;
+  margin: 0.6em 0;
+  hanging-punctuation: allow-end;
+}
+.md-theme-heti h1,
+.md-theme-heti h2,
+.md-theme-heti h3,
+.md-theme-heti h4 {
+  font-family: 'Source Han Sans SC', 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  text-indent: 0;
+  letter-spacing: 0.08em;
+  font-weight: 700;
+  border: 0;
+}
+.md-theme-heti h1 {
+  text-align: center;
+  font-size: 1.5em;
+  margin: 1.4em 0 1em;
+  padding-bottom: 0.5em;
+  border-bottom: 2px solid var(--accent);
+  display: block;
+}
+.md-theme-heti h2 {
+  text-align: left;
+  font-size: 1.25em;
+  margin: 1.6em 0 0.7em;
+  padding-left: 0.6em;
+  border-left: 4px solid var(--accent);
+}
+.md-theme-heti h3 {
+  font-size: 1.1em;
+  color: var(--accent-2);
+  margin: 1.3em 0 0.5em;
+}
+.md-theme-heti h3::before { content: '◆ '; color: var(--accent); }
+.md-theme-heti blockquote {
+  font-style: normal;
+  border-left: 0;
+  background: var(--surface-1);
+  border-radius: var(--radius-md);
+  padding: 0.8em 1.2em;
+  margin: 1em 0;
+  position: relative;
+}
+.md-theme-heti blockquote p { text-indent: 0; }
+.md-theme-heti blockquote::before {
+  content: '「';
+  position: absolute;
+  left: 0.2em;
+  top: -0.2em;
+  font-size: 2em;
+  color: var(--accent);
+  opacity: 0.5;
+  font-family: 'Source Han Serif SC', serif;
+}
+.md-theme-heti li,
+.md-theme-heti li > p { text-indent: 0; }
+.md-theme-heti strong { color: var(--accent-2); font-weight: 700; }
+.md-theme-heti em { color: var(--accent); font-style: normal; font-weight: 600; }
+.md-theme-heti :is(p, li) { word-spacing: 0.05em; }
+
+/* ════════════════════════════════════════════════════════════════════════
+   主题：notion — Notion 风，圆角卡片+柔色高亮
+   ════════════════════════════════════════════════════════════════════════ */
+.md-theme-notion {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Inter', 'PingFang SC', sans-serif;
+  font-size: 15px;
+  line-height: 1.7;
+}
+.md-theme-notion h1 {
+  font-size: 2em;
+  font-weight: 700;
+  margin: 0.8em 0 0.4em;
+  border: 0;
+  letter-spacing: -0.012em;
+}
+.md-theme-notion h2 {
+  font-size: 1.5em;
+  font-weight: 600;
+  border: 0;
+  margin: 1.2em 0 0.4em;
+  letter-spacing: -0.008em;
+}
+.md-theme-notion h3 { font-size: 1.22em; font-weight: 600; margin: 1em 0 0.3em; }
+.md-theme-notion p { margin: 0.4em 0; }
+.md-theme-notion blockquote {
+  border-radius: 4px;
+  border-left: 3px solid var(--text-1);
+  background: transparent;
+  padding: 0.3em 1em;
+  margin: 1em 0;
+  color: var(--text-1);
+  font-size: 1.05em;
+}
+.md-theme-notion table { border-collapse: separate; border-spacing: 0; border-radius: 6px; overflow: hidden; }
+.md-theme-notion th { background: rgba(135, 131, 120, 0.15); border-bottom: 1px solid var(--border-2); }
+.md-theme-notion :not(pre) > code {
+  background: rgba(135, 131, 120, 0.18);
+  color: #eb5757;
+  border-radius: 4px;
+  font-size: 0.86em;
+}
+:root[data-theme='dark'] .md-theme-notion :not(pre) > code { color: #ff8a8a; }
+.md-theme-notion pre {
+  border-radius: 6px;
+  background: rgba(135, 131, 120, 0.08);
+  border: 0;
+}
+.md-theme-notion ul li::marker { color: var(--text-1); }
+.md-theme-notion hr { border-top: 1px solid rgba(135, 131, 120, 0.3); }
+
+/* ════════════════════════════════════════════════════════════════════════
+   主题：obsidian — Wiki 风+紫色 callout
+   ════════════════════════════════════════════════════════════════════════ */
+.md-theme-obsidian {
+  font-family: 'Inter', 'Source Han Sans SC', 'Noto Sans SC', sans-serif;
+  font-size: 15px;
+  line-height: 1.75;
+  --ob-purple: #7c5cfc;
+  --ob-purple-soft: rgba(124, 92, 252, 0.12);
+}
+.md-theme-obsidian h1 { color: var(--ob-purple); font-size: 1.7em; font-weight: 700; border: 0; }
+.md-theme-obsidian h2 { color: var(--ob-purple); font-size: 1.4em; border: 0; }
+.md-theme-obsidian h3 { color: var(--accent-2); font-size: 1.18em; }
+.md-theme-obsidian h1::before,
+.md-theme-obsidian h2::before,
+.md-theme-obsidian h3::before { color: var(--text-3); margin-right: 0.4em; opacity: 0.6; }
+.md-theme-obsidian h1::before { content: '#'; }
+.md-theme-obsidian h2::before { content: '##'; }
+.md-theme-obsidian h3::before { content: '###'; }
+.md-theme-obsidian a {
+  color: var(--ob-purple);
+  border-bottom: 1px dotted currentColor;
+  background: linear-gradient(to bottom, transparent 92%, var(--ob-purple-soft) 92%);
+}
+.md-theme-obsidian blockquote {
+  border-left: 4px solid var(--ob-purple);
+  background: var(--ob-purple-soft);
+  border-radius: 4px;
+  padding: 0.7em 1em 0.7em 2.4em;
+  position: relative;
+}
+.md-theme-obsidian blockquote::before {
+  /* SVG lightbulb 替代 emoji */
+  content: '';
+  position: absolute;
+  left: 0.7em;
+  top: 0.85em;
+  width: 1em;
+  height: 1em;
+  background-color: var(--ob-purple);
+  -webkit-mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M15 14c.2-1 .7-1.7 1.5-2.5 1-.9 1.5-2.2 1.5-3.5A6 6 0 0 0 6 8c0 1 .2 2.2 1.5 3.5.7.7 1.3 1.5 1.5 2.5'/><path d='M9 18h6'/><path d='M10 22h4'/></svg>") no-repeat center / contain;
+          mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M15 14c.2-1 .7-1.7 1.5-2.5 1-.9 1.5-2.2 1.5-3.5A6 6 0 0 0 6 8c0 1 .2 2.2 1.5 3.5.7.7 1.3 1.5 1.5 2.5'/><path d='M9 18h6'/><path d='M10 22h4'/></svg>") no-repeat center / contain;
+}
+.md-theme-obsidian :not(pre) > code {
+  background: var(--ob-purple-soft);
+  color: var(--ob-purple);
+  font-weight: 500;
+}
+.md-theme-obsidian pre {
+  background: rgba(124, 92, 252, 0.05);
+  border: 1px solid rgba(124, 92, 252, 0.25);
+}
+.md-theme-obsidian strong { color: var(--ob-purple); }
+.md-theme-obsidian table th { background: var(--ob-purple-soft); color: var(--ob-purple); }
+
+/* ════════════════════════════════════════════════════════════════════════
+   主题：newspaper — 双栏报纸+大报题+首字下沉
+   ════════════════════════════════════════════════════════════════════════ */
+.md-theme-newspaper {
+  font-family: 'Source Serif 4', 'Source Serif Pro', 'Source Han Serif SC', 'Noto Serif SC', Georgia, serif;
+  font-size: 15px;
+  line-height: 1.7;
+  text-align: justify;
+  hyphens: auto;
+  column-count: 2;
+  column-gap: 2.4em;
+  column-rule: 1px solid var(--border-1);
+  padding: 0.5em 0.2em;
+}
+.md-theme-newspaper h1 {
+  column-span: all;
+  font-family: 'Playfair Display', 'Source Serif Pro', 'Source Han Serif SC', serif;
+  font-size: 2.6em;
+  font-weight: 800;
+  text-align: center;
+  letter-spacing: -0.015em;
+  border-top: 4px double var(--text-1);
+  border-bottom: 4px double var(--text-1);
+  padding: 0.45em 0;
+  margin: 0.3em 0 1em;
+  line-height: 1.15;
+}
+.md-theme-newspaper h2 {
+  column-span: all;
+  font-family: inherit;
+  text-align: center;
+  font-style: italic;
+  font-weight: 600;
+  border: 0;
+  font-size: 1.5em;
+  margin: 0.6em 0 0.4em;
+  position: relative;
+}
+.md-theme-newspaper h2::after {
+  content: '';
+  display: block;
+  width: 60px;
+  height: 1px;
+  background: var(--text-2);
+  margin: 0.3em auto 0;
+}
+.md-theme-newspaper h3 { font-style: italic; font-weight: 700; font-size: 1.1em; }
+.md-theme-newspaper > p:first-of-type::first-letter,
+.md-theme-newspaper h1 + p::first-letter,
+.md-theme-newspaper h2 + p::first-letter {
+  float: left;
+  font-family: 'Playfair Display', Georgia, serif;
+  font-size: 3.6em;
+  line-height: 0.85;
+  font-weight: 800;
+  margin: 0.08em 0.12em 0 0;
+  color: var(--accent-2);
+}
+.md-theme-newspaper p { margin: 0.5em 0; }
+.md-theme-newspaper pre,
+.md-theme-newspaper table,
+.md-theme-newspaper img,
+.md-theme-newspaper blockquote { column-span: all; break-inside: avoid; }
+.md-theme-newspaper blockquote {
+  font-family: 'Playfair Display', Georgia, serif;
+  font-style: italic;
+  border: 0;
+  border-top: 1px solid var(--text-2);
+  border-bottom: 1px solid var(--text-2);
+  background: transparent;
+  text-align: center;
+  font-size: 1.25em;
+  margin: 1.2em auto;
+  padding: 0.7em 1em;
+  max-width: 80%;
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   主题：mono — 终端等宽（暗色画布感）
+   ════════════════════════════════════════════════════════════════════════ */
+.md-theme-mono {
+  font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', Consolas, Menlo, monospace;
+  font-size: 13.5px;
+  line-height: 1.6;
+  background: #0d1117;
+  color: #c9d1d9;
+  padding: 1.2em 1.4em;
+  border-radius: var(--radius-md);
+  border: 1px solid #30363d;
+  box-shadow: inset 0 0 40px rgba(88, 166, 255, 0.04);
+}
+.md-theme-mono h1 { color: #58a6ff; border: 0; font-weight: 700; }
+.md-theme-mono h2 { color: #79c0ff; border: 0; font-weight: 700; }
+.md-theme-mono h3 { color: #d2a8ff; border: 0; font-weight: 600; }
+.md-theme-mono h1::before { content: '╔══ '; color: #6e7681; }
+.md-theme-mono h1::after  { content: ' ══╗'; color: #6e7681; }
+.md-theme-mono h2::before { content: '── '; color: #6e7681; }
+.md-theme-mono h2::after  { content: ' ──'; color: #6e7681; }
+.md-theme-mono h3::before { content: '> '; color: #56d364; }
+.md-theme-mono a { color: #58a6ff; border-bottom-color: rgba(88, 166, 255, 0.4); }
+.md-theme-mono strong { color: #ffa657; }
+.md-theme-mono em     { color: #d2a8ff; font-style: normal; }
+.md-theme-mono blockquote {
+  border-left: 2px solid #56d364;
+  color: #8b949e;
+  background: rgba(86, 211, 100, 0.05);
+  padding-left: 1em;
+  border-radius: 0;
+}
+.md-theme-mono blockquote::before { content: '│ '; color: #56d364; }
+.md-theme-mono :not(pre) > code {
+  background: rgba(110, 118, 129, 0.4);
+  color: #ff7b72;
+  border: 1px solid #30363d;
+}
+.md-theme-mono pre {
+  background: #161b22;
+  border: 1px solid #30363d;
+  color: #c9d1d9;
+  border-radius: 4px;
+}
+.md-theme-mono pre code { color: #c9d1d9 !important; }
+.md-theme-mono table { border: 1px solid #30363d; }
+.md-theme-mono table th { background: #161b22; color: #58a6ff; border-color: #30363d; }
+.md-theme-mono table td { background: transparent; border-color: #30363d; }
+.md-theme-mono table tr:nth-child(2n) td { background: rgba(110, 118, 129, 0.08); }
+.md-theme-mono ul li::marker { content: '▸ '; color: #56d364; }
+.md-theme-mono hr { border-top: 1px dashed #30363d; }
+
+/* ════════════════════════════════════════════════════════════════════════
+   主题：handwriting — 手写笔记本，写实纸张（米色横线+红边距+纸纹颗粒）
+   ════════════════════════════════════════════════════════════════════════ */
+.md-theme-handwriting {
+  /* 手写风：贵州书手/建筑师书写 → 霞鹜文楷 → 苹方 */
+  font-family: 'Architects Daughter', 'Shadows Into Light Two', 'Gochi Hand',
+    'LXGW WenKai', 'LXGW WenKai Screen', '霞鹜文楷',
+    'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+  font-size: 18px;
+  line-height: 34px;
+  /* 多层叠加：纤维颗粒 → 淡横线 → 红边距 → 晕影 → 冷白纸张渐变 */
+  background-color: #fafaf6;
+  background-image:
+    /* 纸张纤维颗粒（更淡） */
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='240' height='240'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.50  0 0 0 0 0.46  0 0 0 0 0.40  0 0 0 0.05 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>"),
+    /* 灰调横线，极淡 */
+    repeating-linear-gradient(
+      to bottom,
+      transparent 0,
+      transparent 33px,
+      rgba(120, 110, 95, 0.13) 33px,
+      rgba(120, 110, 95, 0.13) 34px
+    ),
+    /* 红色页边距竖线 */
+    linear-gradient(
+      to right,
+      transparent 0,
+      transparent 2.6em,
+      rgba(214, 80, 70, 0.50) 2.6em,
+      rgba(214, 80, 70, 0.50) calc(2.6em + 1.2px),
+      transparent calc(2.6em + 1.2px)
+    ),
+    /* 角落晕影（轻微） */
+    radial-gradient(ellipse at top left, rgba(120, 100, 70, 0.06), transparent 55%),
+    radial-gradient(ellipse at bottom right, rgba(120, 100, 70, 0.05), transparent 55%),
+    /* 主体冷白纸张渐变 */
+    linear-gradient(135deg, #fdfcf7 0%, #f6f4ec 60%, #efece1 100%);
+  background-size: 240px 240px, auto, auto, auto, auto, auto;
+  background-blend-mode: multiply, normal, normal, normal, normal, normal;
+  padding: 28px 28px 28px 3.2em;
+  border-radius: 4px;
+  border: 1px solid rgba(160, 145, 110, 0.25);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.7) inset,
+    0 8px 24px -8px rgba(80, 70, 50, 0.20),
+    0 2px 6px rgba(80, 70, 50, 0.08);
+  color: #2a2826;
+  position: relative;
+}
+:root[data-theme='dark'] .md-theme-handwriting {
+  background-color: #232323;
+  background-image:
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='240' height='240'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.85  0 0 0 0 0.80  0 0 0 0 0.70  0 0 0 0.05 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>"),
+    repeating-linear-gradient(
+      to bottom,
+      transparent 0,
+      transparent 33px,
+      rgba(200, 195, 180, 0.10) 33px,
+      rgba(200, 195, 180, 0.10) 34px
+    ),
+    linear-gradient(
+      to right,
+      transparent 0,
+      transparent 2.6em,
+      rgba(220, 110, 100, 0.42) 2.6em,
+      rgba(220, 110, 100, 0.42) calc(2.6em + 1.2px),
+      transparent calc(2.6em + 1.2px)
+    ),
+    radial-gradient(ellipse at top left, rgba(0, 0, 0, 0.20), transparent 55%),
+    radial-gradient(ellipse at bottom right, rgba(0, 0, 0, 0.16), transparent 55%),
+    linear-gradient(135deg, #2a2825 0%, #25231f 60%, #201e1b 100%);
+  background-blend-mode: screen, normal, normal, normal, normal, normal;
+  color: #ece4d2;
+  border-color: rgba(220, 200, 160, 0.15);
+  box-shadow:
+    0 1px 0 rgba(255, 245, 220, 0.04) inset,
+    0 8px 24px -8px rgba(0, 0, 0, 0.5);
+}
+.md-theme-handwriting h1,
+.md-theme-handwriting h2,
+.md-theme-handwriting h3 {
+  font-family: inherit;
+  font-weight: 700;
+  border: 0;
+  color: #c44569;
+  position: relative;
+  display: inline-block;
+  letter-spacing: 0.02em;
+}
+:root[data-theme='dark'] .md-theme-handwriting h1,
+:root[data-theme='dark'] .md-theme-handwriting h2,
+:root[data-theme='dark'] .md-theme-handwriting h3 { color: #ff8a9b; }
+.md-theme-handwriting h1 { font-size: 2em; }
+.md-theme-handwriting h2 { font-size: 1.55em; }
+.md-theme-handwriting h3 { font-size: 1.25em; }
+.md-theme-handwriting h1::after,
+.md-theme-handwriting h2::after {
+  content: '';
+  position: absolute;
+  left: -4px;
+  right: -4px;
+  bottom: 2px;
+  height: 9px;
+  background: rgba(255, 211, 105, 0.55);
+  z-index: -1;
+  border-radius: 6px;
+  transform: rotate(-1deg);
+}
+.md-theme-handwriting strong {
+  background: linear-gradient(transparent 65%, rgba(255, 211, 105, 0.7) 65%);
+  padding: 0 2px;
+  color: inherit;
+}
+.md-theme-handwriting em { color: #c44569; font-style: normal; font-weight: 600; }
+.md-theme-handwriting a { color: #4a6fb5; border-bottom: 1.5px wavy currentColor; }
+.md-theme-handwriting blockquote {
+  border-left: 0;
+  background: rgba(255, 211, 105, 0.18);
+  border-radius: 8px;
+  font-style: italic;
+  padding: 0.7em 1em;
+  position: relative;
+  transform: rotate(-0.3deg);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.06);
+}
+.md-theme-handwriting :not(pre) > code,
+.md-theme-handwriting pre,
+.md-theme-handwriting pre code {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.78em;
+}
+.md-theme-handwriting :not(pre) > code {
+  background: rgba(196, 69, 105, 0.12);
+  color: #c44569;
+}
+.md-theme-handwriting ul li::marker { content: '✦ '; }
+
+/* ════════════════════════════════════════════════════════════════════════
+   主题：minimal — 极简，无边框，大留白
+   ════════════════════════════════════════════════════════════════════════ */
+.md-theme-minimal {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'PingFang SC', sans-serif;
+  font-size: 15.5px;
+  line-height: 1.95;
+  max-width: 60ch;
+  margin: 0 auto;
+  font-weight: 300;
+  letter-spacing: 0.005em;
+}
+.md-theme-minimal h1,
+.md-theme-minimal h2,
+.md-theme-minimal h3 {
+  font-weight: 300;
+  letter-spacing: -0.012em;
+  border: 0;
+  margin: 2.2em 0 0.6em;
+  text-align: center;
+}
+.md-theme-minimal h1 { font-size: 2.2em; }
+.md-theme-minimal h2 { font-size: 1.5em; }
+.md-theme-minimal h3 { font-size: 1.15em; color: var(--text-2); }
+.md-theme-minimal h1::after {
+  content: '';
+  display: block;
+  width: 40px;
+  height: 1px;
+  background: var(--text-3);
+  margin: 0.6em auto 0;
+}
+.md-theme-minimal p { margin: 1.2em 0; }
+.md-theme-minimal strong { font-weight: 500; color: var(--text-1); }
+.md-theme-minimal a {
+  color: inherit;
+  border-bottom: 1px solid currentColor;
+  opacity: 0.85;
+}
+.md-theme-minimal a:hover { color: var(--accent); border-color: var(--accent); opacity: 1; }
+.md-theme-minimal blockquote {
+  border: 0;
+  background: transparent;
+  font-style: italic;
+  text-align: center;
+  font-size: 1.1em;
+  color: var(--text-2);
+  padding: 0.8em 2em;
+  margin: 2em 0;
+  position: relative;
+}
+.md-theme-minimal blockquote::before {
+  content: '"';
+  display: block;
+  font-size: 3em;
+  line-height: 0.5;
+  color: var(--text-3);
+  margin-bottom: 0.2em;
+  font-family: Georgia, serif;
+}
+.md-theme-minimal hr {
+  border: 0;
+  text-align: center;
+  margin: 2.5em 0;
+  height: 1em;
+}
+.md-theme-minimal hr::after {
+  content: '· · ·';
+  letter-spacing: 0.5em;
+  color: var(--text-3);
+}
+.md-theme-minimal :not(pre) > code {
+  background: transparent;
+  color: var(--text-1);
+  padding: 0;
+  border-bottom: 1px dotted var(--text-3);
+}
+.md-theme-minimal pre {
+  background: var(--surface-1);
+  border: 0;
+  font-size: 0.85em;
+}
+.md-theme-minimal table { font-size: 0.92em; }
+.md-theme-minimal th { background: transparent; border-bottom: 2px solid var(--text-1); border-top: 0; border-left: 0; border-right: 0; }
+.md-theme-minimal td { border-left: 0; border-right: 0; }
+.md-theme-minimal ul li::marker { content: '— '; color: var(--text-3); }
+
+/* ════════════════════════════════════════════════════════════════════════
+   主题：vibe — Agent 学习面板专用（参考 Cursor / Linear / Raycast）
+   设计目标：高对比、紧凑、富节奏感；给人「沉浸阅读」+「让人想往下读」的vibe-coding 感。
+   不在选择器里暴露，仅 <AgentTab/> 显式指定使用。
+   ════════════════════════════════════════════════════════════════════════ */
+.md-theme-vibe {
+  font-family: 'Inter', 'PingFang SC', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-size: 15px;
+  line-height: 1.78;
+  color: var(--text-1);
+  font-weight: 420;
+  letter-spacing: 0.002em;
+  font-feature-settings: 'cv11', 'ss01';
+}
+/* 第 N 页 / 本单元概括 等外层锚点 */
+.md-theme-vibe h2 {
+  font-size: 1.05em;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--text-1);
+  margin: 1.8em 0 0.8em;
+  padding-left: 0.6em;
+  border-left: 3px solid var(--accent, #3b82f6);
+  border-bottom: 0;
+}
+.md-theme-vibe h2:first-child { margin-top: 0.2em; }
+.md-theme-vibe h3 {
+  font-size: 0.98em;
+  font-weight: 600;
+  color: var(--text-1);
+  margin: 1.4em 0 0.55em;
+  border: 0;
+}
+.md-theme-vibe h4 {
+  font-size: 0.92em;
+  font-weight: 600;
+  color: var(--text-2);
+  margin: 1.1em 0 0.4em;
+}
+.md-theme-vibe p {
+  margin: 0.65em 0;
+  color: var(--text-1);
+}
+.md-theme-vibe strong {
+  font-weight: 650;
+  color: var(--text-1);
+  background: linear-gradient(180deg, transparent 62%, rgba(59, 130, 246, 0.16) 62%);
+  padding: 0 0.06em;
+}
+.md-theme-vibe em { color: var(--text-2); }
+.md-theme-vibe a {
+  color: var(--accent, #3b82f6);
+  text-decoration: none;
+  border-bottom: 1px solid color-mix(in srgb, var(--accent, #3b82f6) 35%, transparent);
+  transition: border-color 0.15s;
+}
+.md-theme-vibe a:hover { border-bottom-color: var(--accent, #3b82f6); }
+.md-theme-vibe blockquote {
+  margin: 1.1em 0;
+  padding: 0.6em 0.95em;
+  border-left: 3px solid color-mix(in srgb, var(--accent, #3b82f6) 50%, transparent);
+  background: color-mix(in srgb, var(--accent, #3b82f6) 5%, transparent);
+  color: var(--text-2);
+  border-radius: 0 6px 6px 0;
+  font-style: normal;
+}
+.md-theme-vibe blockquote p { margin: 0.25em 0; }
+.md-theme-vibe ul, .md-theme-vibe ol { margin: 0.65em 0; padding-left: 1.4em; }
+.md-theme-vibe ul li, .md-theme-vibe ol li { margin: 0.28em 0; }
+.md-theme-vibe ul li::marker { color: var(--accent, #3b82f6); }
+.md-theme-vibe ol li::marker { color: var(--text-3); font-weight: 600; }
+.md-theme-vibe hr {
+  border: 0;
+  border-top: 1px dashed var(--border-2);
+  margin: 1.6em 0;
+}
+.md-theme-vibe :not(pre) > code {
+  font-family: 'JetBrains Mono', 'Fira Code', ui-monospace, Menlo, monospace;
+  font-size: 0.88em;
+  padding: 0.12em 0.36em;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--accent, #3b82f6) 9%, var(--surface-1));
+  color: var(--text-1);
+  border: 1px solid color-mix(in srgb, var(--accent, #3b82f6) 18%, transparent);
+}
+.md-theme-vibe pre {
+  background: var(--surface-1);
+  border: 1px solid var(--border-1);
+  border-radius: 8px;
+  padding: 0.85em 1em;
+  font-size: 0.86em;
+  line-height: 1.55;
+  margin: 1.1em 0;
+}
+.md-theme-vibe pre code { background: transparent; border: 0; padding: 0; }
+.md-theme-vibe table {
+  font-size: 0.92em;
+  border-collapse: collapse;
+  margin: 1em 0;
+  width: 100%;
+}
+.md-theme-vibe th {
+  background: var(--surface-1);
+  border-bottom: 2px solid var(--border-2);
+  text-align: left;
+  font-weight: 600;
+  padding: 0.45em 0.7em;
+}
+.md-theme-vibe td {
+  padding: 0.4em 0.7em;
+  border-bottom: 1px solid var(--border-1);
+}
+
+/* ─── v6 (2026-05) #2 学习区知识屏卡片 + vibe 主题精修 ───
+   仅作用于 .md-knowledge-card 内的 vibe 主题；让讲解更有"教科书 / 杂志"质感 */
+.md-knowledge-card .md-theme-vibe {
+  font-size: 15.5px;
+  line-height: 1.82;
+  /* CJK 首尾标点收紧 */
+  text-spacing-trim: trim-start;
+}
+/* 第一段：稍大字号 + 灰色 lead-in，营造"导言"质感 */
+.md-knowledge-card .md-theme-vibe > p:first-child,
+.md-knowledge-card .md-theme-vibe > p:first-of-type {
+  font-size: 1.04em;
+  color: var(--text-1);
+  margin-top: 0;
+}
+.md-knowledge-card .md-theme-vibe > p:first-child::first-letter,
+.md-knowledge-card .md-theme-vibe > p:first-of-type::first-letter {
+  /* drop-cap 只对拉丁字符生效（CJK 浏览器实现差异较大），所以视觉影响有限但无副作用 */
+  font-weight: 650;
+  color: var(--accent, #3b82f6);
+}
+/* h3：左侧实心小色块，章节感更强；与正文段落拉开节奏 */
+.md-knowledge-card .md-theme-vibe h3 {
+  position: relative;
+  padding-left: 12px;
+  margin-top: 1.7em;
+  font-size: 1.02em;
+}
+.md-knowledge-card .md-theme-vibe h3::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0.4em;
+  bottom: 0.4em;
+  width: 4px;
+  border-radius: 2px;
+  background: linear-gradient(to bottom, var(--accent, #3b82f6), color-mix(in srgb, var(--accent, #3b82f6) 35%, transparent));
+}
+.md-knowledge-card .md-theme-vibe h4 {
+  font-size: 0.95em;
+  color: var(--text-2);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-weight: 600;
+}
+.md-knowledge-card .md-theme-vibe h4::before {
+  content: '§ ';
+  color: var(--text-3);
+  font-weight: 400;
+}
+/* 段落之间增大节奏；连续段落不会太挤 */
+.md-knowledge-card .md-theme-vibe p { margin: 0.85em 0; }
+.md-knowledge-card .md-theme-vibe p + p { margin-top: 0.9em; }
+/* strong 改用更柔和的双色 underline-wave，去掉之前满铺的高亮带 */
+.md-knowledge-card .md-theme-vibe strong {
+  background: none;
+  padding: 0;
+  font-weight: 650;
+  color: var(--text-1);
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--accent, #3b82f6) 35%, transparent);
+  text-decoration-thickness: 2px;
+  text-underline-offset: 3px;
+}
+/* 列表层级颜色 */
+.md-knowledge-card .md-theme-vibe ul ul li::marker { color: color-mix(in srgb, var(--accent, #3b82f6) 50%, var(--text-3)); }
+.md-knowledge-card .md-theme-vibe ul ul ul li::marker { color: var(--text-3); }
+/* blockquote：加引号装饰 */
+.md-knowledge-card .md-theme-vibe blockquote {
+  position: relative;
+  padding-left: 1.8em;
+}
+.md-knowledge-card .md-theme-vibe blockquote::before {
+  content: '"';
+  position: absolute;
+  left: 0.45em;
+  top: -0.15em;
+  font-size: 1.6em;
+  line-height: 1;
+  color: color-mix(in srgb, var(--accent, #3b82f6) 50%, transparent);
+  font-family: Georgia, 'Times New Roman', serif;
+}
+/* 章节分隔线：渐变虚线 */
+.md-knowledge-card .md-theme-vibe hr {
+  border: 0;
+  height: 1px;
+  background: linear-gradient(to right, transparent, var(--border-1), transparent);
+  margin: 2em 0;
+}
+/* 表格视觉精简 */
+.md-knowledge-card .md-theme-vibe table {
+  font-size: 0.93em;
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid var(--border-1);
+}
+.md-knowledge-card .md-theme-vibe th {
+  background: color-mix(in srgb, var(--accent, #3b82f6) 6%, var(--surface-1));
+  border-bottom: 1px solid var(--border-1);
+}
+.md-knowledge-card .md-theme-vibe tr:nth-child(2n) td {
+  background: color-mix(in srgb, var(--text-3) 4%, transparent);
+}
+/* 行内 code：更醒目 + 等宽对齐 */
+.md-knowledge-card .md-theme-vibe :not(pre) > code {
+  font-size: 0.9em;
+  font-weight: 520;
+  padding: 0.14em 0.45em;
+}
+/* 暗色微调 */
+:root[data-theme='dark'] .md-knowledge-card .md-theme-vibe strong {
+  text-decoration-color: color-mix(in srgb, var(--accent, #58a6ff) 45%, transparent);
+}
+/* ════════════════════════════════════════════════════════════════════════
+   ⚠️ DEPRECATED 2026-05 —— 特殊围栏块（Flashcards / Q&A / Mindmap / Concept Map）
+   ----
+   以下样式不再被使用：
+     - preprocessor.ts 已不再识别这些围栏（走默认代码块）
+     - milkdownFenceView.ts 也已退化为 fallback
+     - AI prompt 已同步移除「可选渲染形式」
+   保留 CSS 是为了：（a）以防意外残留的 inline HTML；（b）方便未来重启时回收。
+   不再维护这些样式，请勿在新内容里依赖它们。
+   ════════════════════════════════════════════════════════════════════════ */
+
+/* ─── 公共：块容器标题头 ─────────────────────────────────────────── */
+.md-flashcards,
+.md-qa-list,
+.md-mindmap,
+.md-conceptmap {
+  margin: 1.4em 0;
+  border: 1px solid var(--border-1);
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--surface-1);
+}
+.md-block-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 10px 14px;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border-1);
+}
+.md-block-label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+.md-block-meta {
+  font-size: 11px;
+  color: var(--text-3);
+}
+
+/* ─── Flashcards (click-to-reveal, no 3D) ─────────────────────────
+   每张卡 = <details>。摘要在上、答案在下，点击展开/收起。
+   网格自动换行，单元间用 1px 分隔形成「网格线」效果。 */
+.md-fc-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 1px;
+  background: var(--border-1);
+}
+@media (max-width: 520px) {
+  .md-fc-grid { grid-template-columns: 1fr; }
+}
+.md-fc {
+  background: var(--surface-1);
+  border: 0;
+  margin: 0;
+  padding: 0;
+}
+.md-fc[open] { background: var(--surface-2); }
+.md-fc-summary {
+  list-style: none;
+  cursor: pointer;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px 16px 12px 44px;
+  min-height: 96px;
+  outline: none;
+  transition: background-color 0.15s;
+}
+.md-fc-summary:hover { background: var(--surface-2); }
+.md-fc-summary::-webkit-details-marker { display: none; }
+.md-fc-no {
+  position: absolute;
+  top: 13px; left: 14px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.04em;
+}
+.md-fc-total {
+  color: var(--text-3);
+  font-weight: 400;
+}
+.md-fc-front {
+  font-size: 14px;
+  line-height: 1.65;
+  color: var(--text-1);
+  font-weight: 500;
+}
+.md-fc-hint {
+  font-size: 11px;
+  color: var(--text-3);
+  margin-top: auto;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  opacity: 0.85;
+}
+.md-fc-hint::before {
+  content: '';
+  width: 0; height: 0;
+  border-left: 4px solid transparent;
+  border-right: 4px solid transparent;
+  border-top: 5px solid currentColor;
+  transition: transform 0.2s;
+}
+.md-fc[open] .md-fc-hint { display: none; }
+.md-fc-back {
+  position: relative;
+  padding: 12px 16px 14px 44px;
+  border-top: 1px dashed var(--border-2);
+  font-size: 13.5px;
+  line-height: 1.75;
+  color: var(--text-2);
+}
+.md-fc-back::before {
+  content: '答';
+  position: absolute;
+  top: 12px; left: 14px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--success);
+  letter-spacing: 0.04em;
+}
+.md-fc-back code {
+  font-size: 0.92em;
+  padding: 1px 5px;
+  background: var(--bg);
+  border-radius: 3px;
+}
+.md-fc-back mark {
+  background: var(--accent-glow);
+  color: inherit;
+  padding: 0 3px;
+  border-radius: 3px;
+}
+.md-fc-back strong { color: var(--text-1); }
+.md-fc-back a { color: var(--accent); text-decoration: underline; }
+
+/* ─── Q&A (numbered, expandable) ─────────────────────────────────
+   <details class="md-qa-item"> 一题一行，编号胶囊 + 折叠。
+   答案区使用左侧 accent 竖线表达「这是答案」。 */
+.md-qa-item {
+  border-top: 1px solid var(--border-1);
+  background: var(--surface-1);
+}
+.md-qa-item:first-of-type { border-top: 0; }
+.md-qa-item[open] { background: var(--surface-2); }
+.md-qa-q {
+  list-style: none;
+  cursor: pointer;
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 12px 16px;
+  outline: none;
+}
+.md-qa-q::-webkit-details-marker { display: none; }
+.md-qa-q::after {
+  content: '+';
+  margin-left: auto;
+  color: var(--text-3);
+  font-size: 18px;
+  line-height: 1;
+  font-weight: 300;
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+  transition: color 0.15s;
+}
+.md-qa-item[open] .md-qa-q::after {
+  content: '−';
+  color: var(--accent);
+}
+.md-qa-no {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 6px;
+  border-radius: 6px;
+  background: var(--accent-glow);
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+.md-qa-q-text {
+  flex: 1;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-1);
+  line-height: 1.6;
+}
+.md-qa-a {
+  position: relative;
+  margin: 0 16px 14px 50px;
+  padding: 6px 12px 6px 14px;
+  border-left: 2px solid var(--accent);
+  font-size: 13.5px;
+  line-height: 1.75;
+  color: var(--text-2);
+}
+.md-qa-a code {
+  font-size: 0.92em;
+  padding: 1px 5px;
+  background: var(--bg);
+  border-radius: 3px;
+}
+.md-qa-a mark {
+  background: var(--accent-glow);
+  color: inherit;
+  padding: 0 3px;
+  border-radius: 3px;
+}
+.md-qa-a strong { color: var(--text-1); }
+.md-qa-a a { color: var(--accent); text-decoration: underline; }
+
+/* ─── Mindmap (CSS-only tree connectors) ─────────────────────────
+   单一嵌套 <ul>。每个 <li> 用 ::before 画 L 型连接、::after 延续竖线。 */
+.md-mm-body {
+  padding: 16px 18px 18px;
+  overflow-x: auto;
+}
+.md-mm-root {
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 12px;
+  margin-bottom: 6px;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--text-1);
+  background: var(--accent-glow);
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  line-height: 1.4;
+}
+.md-mm-children,
+.md-mm-children ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.md-mm-children { padding-left: 8px; }
+.md-mm-children .md-mm-children { margin-left: 18px; }
+.md-mm-li {
+  position: relative;
+  padding: 3px 0 3px 20px;
+}
+/* L 形：纵线从顶部到中点 + 横线到节点 */
+.md-mm-li::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 14px;
+  height: 50%;
+  border-left: 1px solid var(--border-2);
+  border-bottom: 1px solid var(--border-2);
+  border-bottom-left-radius: 5px;
+}
+/* 非末项：竖线延续到底，让下一个兄弟连接 */
+.md-mm-li:not(:last-child)::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 50%;
+  bottom: 0;
+  border-left: 1px solid var(--border-2);
+}
+.md-mm-node {
+  display: inline-block;
+  padding: 3px 10px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-1);
+  background: var(--surface-2);
+  border: 1px solid var(--border-1);
+  border-radius: 6px;
+}
+.md-mm-d1 { font-weight: 600; }
+.md-mm-d2 {
+  background: var(--surface-1);
+  color: var(--text-2);
+  font-weight: 500;
+}
+.md-mm-d3,
+.md-mm-d4 {
+  background: transparent;
+  border: 0;
+  padding: 3px 4px;
+  color: var(--text-2);
+  font-size: 12.5px;
+}
+
+/* ─── Concept Map (grouped by source, SVG arrows) ────────────────
+   按「源节点」分组：每个源 = 一个胶囊标题 + 它的所有出边列表。
+   出边行：[关系标签] →SVG  目标。 */
+.md-cm-body {
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.md-cm-group {
+  position: relative;
+  padding-left: 14px;
+  border-left: 2px solid var(--border-2);
+}
+.md-cm-source {
+  display: inline-block;
+  margin-bottom: 6px;
+  padding: 3px 10px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-1);
+  background: var(--accent-glow);
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  line-height: 1.4;
+}
+.md-cm-out {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.md-cm-edge {
+  position: relative;
+  padding: 4px 0 4px 14px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-2);
+  line-height: 1.5;
+  flex-wrap: wrap;
+}
+.md-cm-edge::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 50%;
+  width: 8px;
+  border-top: 1px solid var(--border-2);
+}
+.md-cm-rel {
+  flex-shrink: 0;
+  padding: 1px 7px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--accent);
+  background: var(--surface-2);
+  border: 1px solid var(--border-1);
+  border-radius: 4px;
+  letter-spacing: 0.02em;
+}
+.md-cm-arrow {
+  flex-shrink: 0;
+  width: 18px;
+  height: 8px;
+  color: var(--text-3);
+}
+.md-cm-target {
+  color: var(--text-1);
+  font-weight: 500;
+}
+
+
+/* ─── Inline Lucide Icons (emoji replacement) ─── */
+.md-icon-wrap {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  vertical-align: -0.18em;
+  margin: 0 0.15em;
+  color: var(--accent);
+  width: 1.05em;
+  height: 1.05em;
+}
+.md-icon-wrap > svg {
+  width: 1em;
+  height: 1em;
+}
+
+
+/* === Milkdown fenced-block NodeView chrome === */
+.md-fence-card {
+  position: relative;
+  margin: 1.2em 0;
+  border: 1px solid var(--border-1);
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--surface-1);
+}
+.md-fence-card.md-fence-selected { box-shadow: 0 0 0 2px var(--accent); }
+.md-fence-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 6px 12px;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border-1);
+}
+.md-fence-kind {
+  font-size: 11px; font-weight: 600;
+  color: var(--accent); letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.md-fence-toggle {
+  background: transparent; border: 1px solid var(--border-1);
+  color: var(--text-2); border-radius: 4px;
+  padding: 2px 10px; font-size: 11px;
+  cursor: pointer; transition: all 0.15s;
+}
+.md-fence-toggle:hover {
+  background: var(--accent); color: #fff; border-color: var(--accent);
+}
+.md-fence-preview { padding: 14px; }
+/* 位于编辑器预览面板内的特殊块不走外层 1.4em 边距，避免与 padding 叠加 */
+.md-fence-preview > .md-flashcards,
+.md-fence-preview > .md-qa-list,
+.md-fence-preview > .md-mindmap,
+.md-fence-preview > .md-conceptmap {
+  margin: 0;
+}
+.md-fence-source {
+  display: block; width: 100%;
+  margin: 0; padding: 12px;
+  background: var(--bg);
+  border: 0; border-top: 1px dashed var(--border-1);
+  color: var(--text-1);
+  font-family: ui-monospace, 'Cascadia Code', Menlo, monospace;
+  font-size: 13px; line-height: 1.55;
+  resize: vertical; min-height: 80px;
+  outline: none;
+}
+.md-fence-source:focus { background: var(--surface-2); }
+
+
+/* ════════════════════════════════════════════════════════════════════════
+   KnowledgeMindMap (.kmm-readonly) — 极简现代风节点
+   设计目标：
+     - 白底（暗色反相 slate 800）+ 极轻 hairline 边框，去掉旧版 hairline shadow
+     - 紧凑 padding（5px × 12px），字号 13.5px，字重 500，letter-spacing 微负
+     - **white-space: nowrap**：单行显示，不会被 ellipsis 截断"核心矛盾→核心矛"
+     - **overflow: visible**：foreignObject 边界裁切兜底；svg overflow:visible 已设
+     - 圆角 7px，比卡片更轻盈
+   ════════════════════════════════════════════════════════════════════════ */
+.kmm-readonly .markmap-foreign {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'PingFang SC',
+    'Microsoft YaHei', sans-serif;
+  font-size: 13.5px;
+  font-weight: 500;
+  line-height: 1.4;
+  letter-spacing: -0.008em;
+  /* markmap 把 foreignObject 内部的 div 当节点容器 */
+  padding: 5px 12px;
+  border-radius: 7px;
+  /* 极简白底：去掉旧版灰色背景 + box-shadow */
+  background: #ffffff;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  color: rgb(15 23 42); /* slate-900：保证对比度 */
+  /* **关键**：单行显示不截断。配合 markmap maxWidth=260 + svg overflow:visible，
+     绝大多数节点能完整显示；极少数超长节点会撑出节点框但不会被裁。 */
+  white-space: nowrap !important;
+  overflow: visible !important;
+}
+/* 暗色：slate-800 底，柔和 hairline */
+:root[data-theme='dark'] .kmm-readonly .markmap-foreign,
+.kmm-readonly[data-dark] .markmap-foreign {
+  background: rgb(30 41 59); /* slate-800 */
+  border-color: rgba(255, 255, 255, 0.10);
+  color: rgb(241 245 249); /* slate-100 */
+}
+/* foreignObject 自身在 svg 中默认 overflow=hidden，需要打开让 div 撑出可见 */
+.kmm-readonly foreignObject {
+  overflow: visible;
+}
+/* 内部链接（markdown 中的 [text](url)）不要继承 markmap 默认的下划线 */
+.kmm-readonly .markmap-foreign a {
+  color: inherit;
+  border-bottom: 0;
+  text-decoration: none;
+  pointer-events: none;
+}
+/* markmap 行内代码 → 等宽 + tint */
+.kmm-readonly .markmap-foreign code {
+  font-family: ui-monospace, 'JetBrains Mono', 'Cascadia Mono', Consolas, monospace;
+  font-size: 0.88em;
+  padding: 0 0.3em;
+  border-radius: 3px;
+  background: rgba(124, 58, 237, 0.12);
+  color: #7c3aed;
+}
+:root[data-theme='dark'] .kmm-readonly .markmap-foreign code {
+  background: rgba(167, 139, 250, 0.18);
+  color: #c4b5fd;
+}
+/* 连线：降低饱和度、稍粗一点 */
+.kmm-readonly .markmap-link {
+  opacity: 0.45;
+  stroke-width: 1.5 !important;
+}
+/* 节点圆点：markmap 在每个节点底部画一个小圆，作为可折叠指示器；
+   只读模式下我们也保留它（视觉装饰），但调小一点 */
+.kmm-readonly .markmap-node > circle {
+  opacity: 0.55;
+}
+
+
+/* ════════════════════════════════════════════════════════════════════════
+   AsciiDiagram —— ASCII 流程图 / 框线图高级渲染
+   触发条件：fenced code 包含 box-drawing / 多个箭头字符 / 或显式
+   language-ascii / language-flow / language-diagram。
+   外观：圆角面板 + 顶部假 IDE 标签栏（三圆点 + label）+ dot-grid 背景
+   + 等宽字体（JetBrains Mono / Cascadia / 系统等宽）+ 选择友好。
+   ════════════════════════════════════════════════════════════════════════ */
+.md-ascii {
+  position: relative;
+  margin: 1.1em 0;
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1px solid var(--border-1);
+  background: var(--bg-1);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04), 0 0 0 1px rgba(0, 0, 0, 0.02);
+}
+:root[data-theme='dark'] .md-ascii {
+  border-color: #30363d;
+  background: #0d1117;
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.03) inset,
+    0 4px 12px rgba(0, 0, 0, 0.3);
+}
+/* 顶部标签栏：仿 IDE/macOS 窗口控制条 */
+.md-ascii-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 12px;
+  background: linear-gradient(
+    to bottom,
+    rgba(0, 0, 0, 0.025),
+    rgba(0, 0, 0, 0.015)
+  );
+  border-bottom: 1px solid var(--border-1);
+  user-select: none;
+}
+:root[data-theme='dark'] .md-ascii-bar {
+  background: linear-gradient(to bottom, #161b22, #13181f);
+  border-bottom-color: rgba(48, 54, 61, 0.7);
+}
+.md-ascii-dots {
+  display: inline-flex;
+  gap: 6px;
+}
+.md-ascii-dots > span {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  display: inline-block;
+}
+.md-ascii-dots > span:nth-child(1) {
+  background: #ff5f57;
+  box-shadow: 0 0 0 0.5px rgba(190, 47, 34, 0.3) inset;
+}
+.md-ascii-dots > span:nth-child(2) {
+  background: #febc2e;
+  box-shadow: 0 0 0 0.5px rgba(180, 130, 0, 0.3) inset;
+}
+.md-ascii-dots > span:nth-child(3) {
+  background: #28c840;
+  box-shadow: 0 0 0 0.5px rgba(12, 130, 36, 0.3) inset;
+}
+.md-ascii-title {
+  flex: 1;
+  text-align: center;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-3);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.md-ascii-lang {
+  font-family: ui-monospace, 'JetBrains Mono', 'Cascadia Mono', Consolas, monospace;
+  font-size: 9.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-3);
+  padding: 1.5px 6px;
+  border-radius: 3px;
+  background: rgba(0, 0, 0, 0.04);
+}
+:root[data-theme='dark'] .md-ascii-lang {
+  background: rgba(255, 255, 255, 0.06);
+}
+.md-ascii-copy {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 22px;
+  border-radius: 5px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-3);
+  cursor: pointer;
+  transition: background 120ms, color 120ms, border-color 120ms;
+}
+.md-ascii-copy:hover {
+  background: rgba(0, 0, 0, 0.06);
+  color: var(--text-1);
+  border-color: var(--border-1);
+}
+:root[data-theme='dark'] .md-ascii-copy:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+/* 主体代码区 */
+.md-ascii-body {
+  position: relative;
+  padding: 16px 18px;
+  /* dot grid 背景：浅色和暗色都接受 */
+  background-image: radial-gradient(
+    circle at 1px 1px,
+    rgba(0, 0, 0, 0.07) 1px,
+    transparent 0
+  );
+  background-size: 10px 10px;
+  background-position: 9px 15px;
+  overflow-x: auto;
+  /* 隐藏滚动条但仍可滚 */
+  scrollbar-width: thin;
+}
+:root[data-theme='dark'] .md-ascii-body {
+  background-image: radial-gradient(
+    circle at 1px 1px,
+    rgba(255, 255, 255, 0.06) 1px,
+    transparent 0
+  );
+}
+.md-ascii-body pre {
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  /* 关键：等宽字体 + 关连字 + tabular-nums，让 ASCII 字符严格列对齐 */
+  font-family: 'JetBrains Mono', ui-monospace, 'Cascadia Mono', 'Fira Code',
+    Consolas, 'Courier New', monospace;
+  font-size: 12.5px;
+  line-height: 1.55;
+  font-feature-settings: 'liga' 0, 'calt' 0;
+  font-variant-ligatures: none;
+  font-variant-numeric: tabular-nums;
+  tab-size: 4;
+  /* ASCII 图依赖严格列对齐：禁止换行 */
+  white-space: pre;
+  word-break: normal;
+  overflow-wrap: normal;
+  color: var(--text-1);
+}
+.md-ascii-body pre code {
+  background: transparent;
+  padding: 0;
+  border: 0;
+  color: inherit;
+  font: inherit;
+  white-space: inherit;
+}
+/* 字符着色 —— 通过 span class 标记不同语义 */
+.md-ascii .ascii-box {
+  /* 框线字符 ─│┌┐└┘├┤┬┴┼ + 双线 + ASCII +-|=/\ 等 */
+  color: var(--text-3);
+  opacity: 0.85;
+}
+:root[data-theme='dark'] .md-ascii .ascii-box {
+  color: #7d8590;
+  opacity: 1;
+}
+.md-ascii .ascii-arrow {
+  /* 箭头字符 → ← ↑ ↓ ⇒ ⇐ ⇑ ⇓ ▶ ◀ ▲ ▼ ↳ ↴ 等 */
+  color: #2563eb;
+  font-weight: 600;
+}
+:root[data-theme='dark'] .md-ascii .ascii-arrow {
+  color: #79c0ff;
+}
+.md-ascii .ascii-label {
+  /* 标识符字符（[A-Za-z\u4e00-\u9fff_] 等内容文字）——保持主色高对比 */
+  color: var(--text-1);
+  font-weight: 500;
+}
+:root[data-theme='dark'] .md-ascii .ascii-label {
+  color: #e6edf3;
+}
+.md-ascii .ascii-num {
+  color: #ea580c;
+}
+:root[data-theme='dark'] .md-ascii .ascii-num {
+  color: #ffa657;
+}
+.md-ascii .ascii-punct {
+  /* 标点 ()[]:.,;= 等：弱化 */
+  color: var(--text-2);
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   v6 (2026-05) #4 ASCII 图示 → SVG 可视化升级
+   .md-ascii-v2: 把容器从'IDE 代码窗'升级为'技术插画卡片'
+   .ascii-svg-*: SVG 内部节点 / 边 / 背景的着色
+   ════════════════════════════════════════════════════════════════════════ */
+/* v2 容器：去掉 IDE 黑窗厚边 + 圆点装饰，用更轻盈的边框 + 阴影 */
+.md-ascii-v2 {
+  margin: 1.1em 0;
+  border-radius: 12px;
+  border: 1px solid var(--border-1);
+  background: var(--bg-1);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03), 0 4px 14px rgba(0, 0, 0, 0.04);
+  overflow: hidden;
+}
+:root[data-theme='dark'] .md-ascii-v2 {
+  border-color: rgba(48, 54, 61, 0.8);
+  background: #0f141a;
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.02) inset,
+    0 6px 18px rgba(0, 0, 0, 0.35);
+}
+/* v2 顶部条：左图标 + 居中标题（不再用三圆点）+ 右侧操作群 */
+.md-ascii-v2 .md-ascii-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: linear-gradient(to bottom, var(--surface-1), var(--bg-1));
+  border-bottom: 1px solid var(--border-1);
+  user-select: none;
+}
+:root[data-theme='dark'] .md-ascii-v2 .md-ascii-bar {
+  background: linear-gradient(to bottom, #161b22, #131820);
+  border-bottom-color: rgba(48, 54, 61, 0.6);
+}
+.md-ascii-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  background: rgba(37, 99, 235, 0.1);
+  color: #2563eb;
+}
+:root[data-theme='dark'] .md-ascii-icon {
+  background: rgba(88, 166, 255, 0.14);
+  color: #79c0ff;
+}
+.md-ascii-v2 .md-ascii-title {
+  flex: 1;
+  text-align: left;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--text-2);
+}
+.md-ascii-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.md-ascii-modes {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px;
+  border-radius: 7px;
+  background: var(--surface-2);
+  border: 1px solid var(--border-1);
+}
+:root[data-theme='dark'] .md-ascii-modes {
+  background: rgba(255, 255, 255, 0.04);
+  border-color: rgba(48, 54, 61, 0.7);
+}
+.md-ascii-mode-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  font-size: 10.5px;
+  font-weight: 500;
+  color: var(--text-3);
+  background: transparent;
+  border: 0;
+  border-radius: 5px;
+  cursor: pointer;
+  transition: background 120ms, color 120ms;
+}
+.md-ascii-mode-btn:hover { color: var(--text-1); }
+.md-ascii-mode-btn.is-active {
+  background: var(--bg-1);
+  color: var(--text-1);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+}
+:root[data-theme='dark'] .md-ascii-mode-btn.is-active {
+  background: rgba(255, 255, 255, 0.1);
+  color: #e6edf3;
+}
+/* SVG 模式下主体区背景换成浅纸张 / 暗工程纸 */
+.md-ascii-mode-svg .md-ascii-body {
+  padding: 12px;
+  background-image: none;
+  background-color: #fafbfc;
+}
+:root[data-theme='dark'] .md-ascii-mode-svg .md-ascii-body {
+  background-color: #0d1117;
+}
+/* SVG 自身样式 */
+.ascii-svg { display: block; width: 100%; max-width: 100%; height: auto; }
+.ascii-svg-bg { fill: transparent; }
+.ascii-svg-dot { fill: rgba(0, 0, 0, 0.08); }
+:root[data-theme='dark'] .ascii-svg-dot { fill: rgba(255, 255, 255, 0.07); }
+.ascii-svg-node-rect {
+  fill: rgba(37, 99, 235, 0.06);
+  stroke: rgba(37, 99, 235, 0.55);
+  stroke-width: 1.4;
+}
+:root[data-theme='dark'] .ascii-svg-node-rect {
+  fill: rgba(88, 166, 255, 0.1);
+  stroke: rgba(121, 192, 255, 0.6);
+}
+.ascii-svg-node-text {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  font-size: 12px;
+  font-weight: 500;
+  fill: #1f2328;
+}
+:root[data-theme='dark'] .ascii-svg-node-text { fill: #e6edf3; }
+.ascii-svg-edge {
+  fill: none;
+  stroke: #4b5563;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+:root[data-theme='dark'] .ascii-svg-edge { stroke: #9198a1; }
+.ascii-svg-arrow-head { fill: #4b5563; }
+:root[data-theme='dark'] .ascii-svg-arrow-head { fill: #9198a1; }
+
+/* ════════════════════════════════════════════════════════════════════════
+   v6 (2026-05) #1 训练区 MarkdownView 局部覆盖
+   作用：题面 / 反馈 / 参考答案在卡片里的 MarkdownView 字号 / 间距收紧，
+   与训练页 12-13.5px 视觉系统保持一致；代码块用 GitHub Dark 风格。
+   ════════════════════════════════════════════════════════════════════════ */
+.md-training-prompt .md-root,
+.md-training-feedback .md-root,
+.md-training-answer .md-root,
+.md-training-rubric .md-root {
+  font-size: 13px;
+  line-height: 1.65;
+}
+.md-training-answer .md-root,
+.md-training-rubric .md-root {
+  font-size: 12px;
+  line-height: 1.6;
+}
+.md-training-prompt .md-root > *:first-child,
+.md-training-feedback .md-root > *:first-child,
+.md-training-answer .md-root > *:first-child,
+.md-training-rubric .md-root > *:first-child { margin-top: 0; }
+.md-training-prompt .md-root > *:last-child,
+.md-training-feedback .md-root > *:last-child,
+.md-training-answer .md-root > *:last-child,
+.md-training-rubric .md-root > *:last-child { margin-bottom: 0; }
+.md-training-prompt .md-root p,
+.md-training-feedback .md-root p { margin: 0.5em 0; }
+.md-training-prompt .md-root h1,
+.md-training-prompt .md-root h2,
+.md-training-prompt .md-root h3,
+.md-training-feedback .md-root h3,
+.md-training-feedback .md-root h4 { font-size: 1em; margin: 0.6em 0 0.3em; border: 0; padding: 0; }
+.md-training-prompt .md-root ul,
+.md-training-prompt .md-root ol,
+.md-training-feedback .md-root ul,
+.md-training-feedback .md-root ol { margin: 0.4em 0; padding-left: 1.25em; }
+/* 代码块：训练区里走 GitHub-dark 暗背景，与右侧 CodeMirror 视觉一致 */
+.md-training-prompt .md-root pre,
+.md-training-feedback .md-root pre,
+.md-training-answer .md-root pre {
+  background: #0d1117;
+  border: 1px solid #30363d;
+  color: #e6edf3;
+  padding: 0.7em 0.9em;
+  margin: 0.6em 0;
+  border-radius: 8px;
+  font-size: 11.5px;
+  line-height: 1.55;
+}
+.md-training-prompt .md-root pre code,
+.md-training-feedback .md-root pre code,
+.md-training-answer .md-root pre code { color: #e6edf3; background: transparent; }
+.md-training-prompt .md-root pre code.hljs,
+.md-training-feedback .md-root pre code.hljs,
+.md-training-answer .md-root pre code.hljs { color: #e6edf3; background: transparent; }
+/* hljs token —— 直接套用 dark 配色（不受全局 data-theme 切换影响） */
+.md-training-prompt .md-root .hljs-keyword,
+.md-training-feedback .md-root .hljs-keyword,
+.md-training-answer .md-root .hljs-keyword,
+.md-training-prompt .md-root .hljs-tag,
+.md-training-feedback .md-root .hljs-tag,
+.md-training-answer .md-root .hljs-tag { color: #ff7b72; }
+.md-training-prompt .md-root .hljs-string,
+.md-training-feedback .md-root .hljs-string,
+.md-training-answer .md-root .hljs-string,
+.md-training-prompt .md-root .hljs-attr,
+.md-training-feedback .md-root .hljs-attr,
+.md-training-answer .md-root .hljs-attr { color: #a5d6ff; }
+.md-training-prompt .md-root .hljs-number,
+.md-training-feedback .md-root .hljs-number,
+.md-training-answer .md-root .hljs-number,
+.md-training-prompt .md-root .hljs-literal,
+.md-training-feedback .md-root .hljs-literal,
+.md-training-answer .md-root .hljs-literal { color: #79c0ff; }
+.md-training-prompt .md-root .hljs-comment,
+.md-training-feedback .md-root .hljs-comment,
+.md-training-answer .md-root .hljs-comment { color: #8b949e; font-style: italic; }
+.md-training-prompt .md-root .hljs-title,
+.md-training-feedback .md-root .hljs-title,
+.md-training-answer .md-root .hljs-title,
+.md-training-prompt .md-root .hljs-function .hljs-title,
+.md-training-feedback .md-root .hljs-function .hljs-title,
+.md-training-answer .md-root .hljs-function .hljs-title { color: #d2a8ff; }
+.md-training-prompt .md-root .hljs-built_in,
+.md-training-feedback .md-root .hljs-built_in,
+.md-training-answer .md-root .hljs-built_in,
+.md-training-prompt .md-root .hljs-type,
+.md-training-feedback .md-root .hljs-type,
+.md-training-answer .md-root .hljs-type { color: #ffa657; }
+/* 行内 code：浅色块 + 深字，提升与正文对比度 */
+.md-training-prompt .md-root :not(pre) > code,
+.md-training-feedback .md-root :not(pre) > code,
+.md-training-answer .md-root :not(pre) > code,
+.md-training-rubric .md-root :not(pre) > code {
+  font-size: 0.88em;
+  background: rgba(175, 184, 193, 0.18);
+  border-radius: 4px;
+  padding: 0.12em 0.4em;
+  border: 0;
+}
+

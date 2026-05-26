@@ -1,0 +1,16 @@
+{
+  "identifier": "mobile",
+  "description": "enables permissions for mobile",
+  "windows": [
+    "main"
+  ],
+  "platforms": ["android", "iOS"],
+  "permissions": [
+    "core:default",
+    "core:window:allow-close",
+    "core:window:allow-set-focus",
+    "core:event:default",
+    "core:event:allow-listen",
+    "core:event:allow-emit"
+  ]
+}

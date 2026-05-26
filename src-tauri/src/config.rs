@@ -21,9 +21,14 @@ pub struct ModelConfig {
     /// 是否使用系统代理（默认 true）
     #[serde(default = "default_true")]
     pub use_proxy: bool,
+    /// 模型用途："chat"（默认）| "embedding"
+    /// 老配置文件没有这个字段时默认按 "chat" 处理，向后兼容。
+    #[serde(default = "default_chat_kind")]
+    pub kind: String,
 }
 
 fn default_true() -> bool { true }
+fn default_chat_kind() -> String { "chat".to_string() }
 
 /// 从 JSON 文件加载模型配置列表
 pub fn load_models(path: &Path) -> Vec<ModelConfig> {
@@ -51,7 +56,28 @@ pub fn save_models(path: &Path, models: &[ModelConfig]) -> Result<(), String> {
 pub fn to_llm_configs(models: &[ModelConfig]) -> Vec<LlmConfig> {
     models
         .iter()
-        .filter(|m| m.enabled)
+        .filter(|m| m.enabled && model_kind(m) == "chat")
+        .map(|m| LlmConfig {
+            provider: m.provider.clone(),
+            api_key: m.api_key.clone(),
+            api_base: m.api_base.clone(),
+            model: m.model.clone(),
+            use_proxy: m.use_proxy,
+        })
+        .collect()
+}
+
+/// 把 ModelConfig 中的 kind 字段读出，老配置无字段时按 chat 处理（向后兼容）。
+fn model_kind(m: &ModelConfig) -> &str {
+    if m.kind.is_empty() { "chat" } else { m.kind.as_str() }
+}
+
+/// 取出所有"用途 = embedding"且启用的模型，转成 LlmConfig 列表。
+/// 调用方一般只用 `[0]` 作为默认 embedding（可在前端选择多个时再扩展）。
+pub fn to_embedding_configs(models: &[ModelConfig]) -> Vec<LlmConfig> {
+    models
+        .iter()
+        .filter(|m| m.enabled && model_kind(m) == "embedding")
         .map(|m| LlmConfig {
             provider: m.provider.clone(),
             api_key: m.api_key.clone(),

@@ -119,8 +119,8 @@
         document.getElementById('prevPage').addEventListener('click', function () { goToPage(state.currentPage - 1); });
         document.getElementById('nextPage').addEventListener('click', function () { goToPage(state.currentPage + 1); });
 
-        // Generate all
-        $generateAllBtn.addEventListener('click', handleGenerateAll);
+        // Round 4: generateAllBtn 已从 DOM 删除 — 此绑定也随之移除
+        if ($generateAllBtn) $generateAllBtn.addEventListener('click', handleGenerateAll);
 
         // Zoom
         document.getElementById('zoomIn').addEventListener('click', function () {
@@ -244,8 +244,8 @@
             state.isSelecting = false;
         });
 
-        // ── Toolbar auto-hide ───────────────────────────────────────────────
-        setupToolbarAutoHide();
+        // ── Round 6: 顶部悬浮把手（沉浸阅读） ───────────────────────────────
+        setupTopToolbarHandle();
 
         // ── Notebook resizer (vertical) ─────────────────────────────────────
         setupNbResizer();
@@ -259,52 +259,243 @@
         // ── PDF text selection floating toolbar ─────────────────────────────
         setupFloatingToolbar();
 
-        // ── Q&A Chat ────────────────────────────────────────────────────────
+        // ── Q&A Chat (Round 2: removed; modal DOM no longer in HTML) ──────
         setupQAChat();
+        // ── Round 6: 顶部悬浮栏增强（默认沉浸 + 顶部把手） ───────────────
+        setupTopToolbarHandle();
+        // ── Round 2: top-toolbar quick-gen buttons ────────────────────────
+        setupQuickGenButtons();
+        // ── Round 5: Agent 聊天浮窗（Ctrl+K 唤起） ────────────────────────
+        setupAgentChatPopup();
     }
 
-    // ── Toolbar auto-hide logic ──────────────────────────────────────────────
-    function setupToolbarAutoHide() {
+    // ── Round 4: setupToolbarAutoHide 完全删除（顶栏永远可见，不再有刘海触发条） ─────
+
+    // ── Quick-gen toolbar buttons (Round 2) ──────────────────────────────────
+    function setupQuickGenButtons() {
+        var btnCurrent = document.getElementById('quickGenCurrentBtn');
+        var docQuickBtn = document.getElementById('docQuickGenBtn');
+        var btnRange = document.getElementById('quickGenRangeBtn');
+        var pop = document.getElementById('pgrPopover');
+        var pgrInput = document.getElementById('pgrInput');
+        var pgrCancel = document.getElementById('pgrCancel');
+        var pgrSubmit = document.getElementById('pgrSubmit');
+
+        function activeNotebookId() {
+            var nb = window.NotebookManager && window.NotebookManager.getState ? window.NotebookManager.getState() : null;
+            return nb && nb.activeNotebookId ? nb.activeNotebookId : null;
+        }
+        function ensureNotebook() {
+            var id = activeNotebookId();
+            if (!id) {
+                alert('请先在右侧选择或创建一个笔记本');
+                return null;
+            }
+            return id;
+        }
+
+        function ensureNotebook() {
+            var id = activeNotebookId();
+            if (!id) {
+                try {
+                    if (window.NotebookManager && typeof window.NotebookManager.openPicker === 'function') {
+                        window.NotebookManager.openPicker();
+                    }
+                    if (window.UIBusy && typeof window.UIBusy.toast === 'function') {
+                        window.UIBusy.toast('请先选择一个笔记本', 1800, false);
+                    }
+                } catch (_) { }
+                return null;
+            }
+            return id;
+        }
+
+        function runCurrentPageGeneration() {
+                if (!state.sessionId) return;
+                var nbId = ensureNotebook();
+                if (!nbId) return;
+                // 锁定点击瞬间的页码，避免后续翻页导致生成错位
+                var requestPageIndex = state.currentPage;
+                // Round 5: 显著的等待反馈 — 按钮进入 loading，顶部出现进度条，toast 提示
+                if (btnCurrent) {
+                    btnCurrent.disabled = true;
+                    btnCurrent.classList.add('loading');
+                }
+                UIBusy.push('正在为第 ' + (requestPageIndex + 1) + ' 页生成笔记…');
+                try {
+                    if (window.NotebookManager && typeof window.NotebookManager.beginSectionGenerating === 'function') {
+                        window.NotebookManager.beginSectionGenerating('AI 正在生成第 ' + (requestPageIndex + 1) + ' 页笔记...');
+                    }
+                } catch (_) { }
+                var contentPromise;
+                if (state.isPdf && state.pdfDoc) {
+                    contentPromise = state.pdfDoc.getPage(requestPageIndex + 1)
+                        .then(function (page) { return page.getTextContent(); })
+                        .then(function (textContent) {
+                            return textContent.items.map(function (item) { return item.str; }).join(' ');
+                        })
+                        .catch(function () { return null; });
+                } else if (state.pageContents && state.pageContents[requestPageIndex] !== undefined) {
+                    contentPromise = Promise.resolve(state.pageContents[requestPageIndex]);
+                } else {
+                    contentPromise = Promise.resolve(null);
+                }
+
+                contentPromise.then(function (pageContentSnapshot) {
+                    return invoke('notebook_generate_auto_section', {
+                        notebookId: nbId,
+                        sessionId: state.sessionId,
+                        pageIndex: requestPageIndex,
+                        pageContent: pageContentSnapshot,
+                    });
+                }).then(function () {
+                    // 这里仅代表任务已提交到后台，真正完成由 notebook-section-generated 事件驱动
+                    UIBusy.toast('第 ' + (requestPageIndex + 1) + ' 页已提交生成，处理中…', 1600);
+                }).catch(function (err) {
+                    console.error('当前页生成失败:', err);
+                    try {
+                        if (window.NotebookManager && typeof window.NotebookManager.endSectionGenerating === 'function') {
+                            window.NotebookManager.endSectionGenerating();
+                        }
+                    } catch (_) { }
+                    UIBusy.toast('生成失败：' + String(err).slice(0, 80), 3000, true);
+                }).finally(function () {
+                    if (btnCurrent) {
+                        btnCurrent.classList.remove('loading');
+                        btnCurrent.disabled = !(state.sessionId);
+                    }
+                    if (docQuickBtn) docQuickBtn.disabled = !(state.sessionId);
+                    UIBusy.pop();
+                });
+        }
+
+        if (btnCurrent) btnCurrent.addEventListener('click', runCurrentPageGeneration);
+        if (docQuickBtn) docQuickBtn.addEventListener('click', runCurrentPageGeneration);
+
+        function openPopover() {
+            if (!pop || !btnRange) return;
+            var r = btnRange.getBoundingClientRect();
+            pop.style.top = (r.bottom + 6) + 'px';
+            pop.style.left = Math.max(8, r.right - 260) + 'px';
+            pop.classList.add('open');
+            if (pgrInput) { pgrInput.value = ''; setTimeout(function () { pgrInput.focus(); }, 30); }
+        }
+        function closePopover() { if (pop) pop.classList.remove('open'); }
+
+        if (btnRange) {
+            btnRange.addEventListener('click', function (e) {
+                e.stopPropagation();
+                if (!state.sessionId) return;
+                if (pop && pop.classList.contains('open')) closePopover(); else openPopover();
+            });
+        }
+        if (pgrCancel) pgrCancel.addEventListener('click', closePopover);
+        document.addEventListener('click', function (e) {
+            if (!pop || !pop.classList.contains('open')) return;
+            if (pop.contains(e.target) || (btnRange && btnRange.contains(e.target))) return;
+            closePopover();
+        });
+        if (pgrInput) pgrInput.addEventListener('keydown', function (e) {
+            if (e.key === 'Enter') { e.preventDefault(); pgrSubmit && pgrSubmit.click(); }
+            else if (e.key === 'Escape') closePopover();
+        });
+        if (pgrSubmit) {
+            pgrSubmit.addEventListener('click', function () {
+                if (!state.sessionId) return;
+                var nbId = ensureNotebook();
+                if (!nbId) return;
+                var raw = (pgrInput && pgrInput.value || '').trim();
+                if (!raw) return;
+                var pages = parsePageRange(raw, state.pageCount);
+                if (!pages.length) { alert('页码格式无效'); return; }
+                closePopover();
+                // Round 5: 页范围生成也加等待提示
+                UIBusy.push('正在为 ' + pages.length + ' 页生成笔记…');
+                pgrSubmit.disabled = true;
+                invoke('notebook_generate_from_pages', {
+                    notebookId: nbId,
+                    sessionId: state.sessionId,
+                    pageIndexes: pages,
+                    noteType: 'note',
+                    customPrompt: null,
+                }).then(function () {
+                    UIBusy.toast('已开始生成 ' + pages.length + ' 页笔记', 1800);
+                }).catch(function (err) {
+                    console.error('页范围生成失败:', err);
+                    UIBusy.toast('生成失败：' + String(err).slice(0, 80), 3000, true);
+                }).finally(function () {
+                    UIBusy.pop();
+                    pgrSubmit.disabled = false;
+                });
+            });
+        }
+    }
+
+    function setupTopToolbarHandle() {
+        var app = document.querySelector('.app-container');
         var toolbar = document.querySelector('.toolbar');
-        var revealZone = document.getElementById('toolbarReveal');
-        var appContainer = document.querySelector('.app-container');
-        if (!toolbar || !revealZone) return;
+        var KEY = 'toolbarFloatingCollapsed';
+        if (!app || !toolbar) return;
 
-        function showToolbar() {
-            toolbar.classList.remove('auto-hidden');
-            if (appContainer) appContainer.classList.remove('toolbar-collapsed');
+        function renderFab() {
+            var fab = document.getElementById('nbFloatToolbarBtn');
+            if (!fab) return;
+            var collapsed = app.classList.contains('toolbar-floating-collapsed');
+            fab.title = collapsed ? '显示工具栏' : '收起工具栏';
+            fab.innerHTML = collapsed
+                ? '<i data-lucide="panel-top-open" style="width:15px;height:15px"></i>'
+                : '<i data-lucide="panel-top-close" style="width:15px;height:15px"></i>';
+            if (window.lucide) { try { window.lucide.createIcons(); } catch (_) { } }
         }
 
-        function hideToolbar() {
-            toolbar.classList.add('auto-hidden');
-            if (appContainer) appContainer.classList.add('toolbar-collapsed');
+        function setCollapsed(collapsed, persist) {
+            app.classList.toggle('toolbar-floating-collapsed', !!collapsed);
+            renderFab();
+            if (persist !== false) {
+                try { localStorage.setItem(KEY, collapsed ? '1' : '0'); } catch (_) { }
+            }
         }
 
-        var revealTimer = null;
+        // Expose for notebook.js to call
+        window._setToolbarCollapsed = setCollapsed;
+        window._isToolbarCollapsed = function () {
+            return app.classList.contains('toolbar-floating-collapsed');
+        };
 
-        // 默认折叠
-        hideToolbar();
-
-        // 鼠标进入顶部感应区 → 延迟展开
-        revealZone.addEventListener('mouseenter', function () {
-            revealTimer = setTimeout(showToolbar, 400);
+        document.addEventListener('click', function (e) {
+            if (app.classList.contains('toolbar-floating-collapsed')) return;
+            if (toolbar.contains(e.target)) return;
+            var floatDock = document.getElementById('nbFloatDock');
+            if (floatDock && floatDock.contains(e.target)) return;
+            setCollapsed(true);
+        });
+        document.addEventListener('keydown', function (e) {
+            if (e.key === 'Escape') setCollapsed(true);
         });
 
-        // 鼠标离开感应区 → 取消延迟
-        revealZone.addEventListener('mouseleave', function () {
-            if (revealTimer) { clearTimeout(revealTimer); revealTimer = null; }
-        });
+        try {
+            setCollapsed(localStorage.getItem(KEY) !== '0', false);
+        } catch (_) {
+            setCollapsed(true, false);
+        }
+    }
 
-        // 鼠标在工具栏上 → 保持展开
-        toolbar.addEventListener('mouseenter', function () {
-            if (revealTimer) { clearTimeout(revealTimer); revealTimer = null; }
-            showToolbar();
-        });
-
-        // 鼠标离开工具栏 → 折叠
-        toolbar.addEventListener('mouseleave', function () {
-            hideToolbar();
-        });
+    function parsePageRange(spec, maxPage) {
+        var out = []; var seen = {};
+        var parts = spec.split(/[,，]/);
+        for (var i = 0; i < parts.length; i++) {
+            var p = parts[i].trim(); if (!p) continue;
+            var m = p.match(/^(\d+)\s*[-~]\s*(\d+)$/);
+            if (m) {
+                var a = parseInt(m[1], 10), b = parseInt(m[2], 10);
+                if (a > b) { var t = a; a = b; b = t; }
+                for (var n = a; n <= b; n++) if (!seen[n] && n >= 1 && (!maxPage || n <= maxPage)) { seen[n] = 1; out.push(n - 1); }
+            } else if (/^\d+$/.test(p)) {
+                var k = parseInt(p, 10);
+                if (!seen[k] && k >= 1 && (!maxPage || k <= maxPage)) { seen[k] = 1; out.push(k - 1); }
+            }
+        }
+        return out;
     }
 
     // ── Notebook vertical resizer between entries-list and preview ────────────
@@ -388,6 +579,32 @@
         }
 
         resizer.addEventListener('mousedown', onMouseDown);
+
+        // 触控支持
+        function onTouchStart(e) {
+            if (e.touches.length !== 1) return;
+            e.preventDefault();
+            var t = e.touches[0];
+            startY = t.clientY;
+            startH = entriesList.getBoundingClientRect().height;
+            parentH = entriesList.parentElement.getBoundingClientRect().height;
+            snapped = null;
+            document.addEventListener('touchmove', onTouchMove, { passive: false });
+            document.addEventListener('touchend', onTouchEnd);
+            document.addEventListener('touchcancel', onTouchEnd);
+        }
+        function onTouchMove(e) {
+            if (e.touches.length !== 1) return;
+            e.preventDefault();
+            onMouseMove({ clientY: e.touches[0].clientY });
+        }
+        function onTouchEnd() {
+            document.removeEventListener('touchmove', onTouchMove);
+            document.removeEventListener('touchend', onTouchEnd);
+            document.removeEventListener('touchcancel', onTouchEnd);
+            onMouseUp();
+        }
+        resizer.addEventListener('touchstart', onTouchStart, { passive: false });
     }
 
     // ── Notebook preview expand/collapse toggle ──────────────────────────────
@@ -860,10 +1077,12 @@
 
         listen('doc-generate-all-done', function (data) {
             if (data.session_id !== state.sessionId) return;
-            $progressBar.classList.remove('active');
-            $progressFill.style.width = '0%';
-            $generateAllBtn.disabled = false;
-            $generateAllBtn.innerHTML = '<i data-lucide="sparkles" style="width:14px;height:14px"></i><span>全部生成</span><div class="shimmer"></div>';
+            if ($progressBar) $progressBar.classList.remove('active');
+            if ($progressFill) $progressFill.style.width = '0%';
+            if ($generateAllBtn) {
+                $generateAllBtn.disabled = false;
+                $generateAllBtn.innerHTML = '<i data-lucide="sparkles" style="width:14px;height:14px"></i><span>全部生成</span><div class="shimmer"></div>';
+            }
             if (window.lucide) window.lucide.createIcons();
             // 刷新所有笔记
             loadAllNotes();
@@ -874,10 +1093,10 @@
     function showDocUI() {
         $welcomeState.style.display = 'none';
         $docPage.classList.add('visible');
-        $pageBadge.style.display = '';
-        $kgBadge.style.display = '';
-        $pageControls.style.display = '';
-        $generateAllBtn.disabled = false;
+        if ($pageBadge) $pageBadge.style.display = '';
+        if ($kgBadge) $kgBadge.style.display = '';
+        if ($pageControls) $pageControls.style.display = '';
+        if ($generateAllBtn) $generateAllBtn.disabled = false;
         // Enable page-range and text-select buttons
         var prBtn = document.getElementById('pageRangeBtn');
         var tsBtn = document.getElementById('textSelectBtn');
@@ -1060,6 +1279,11 @@
                 var pdfCvs = document.getElementById('pdfCanvas');
                 if (pdfCvs) pdfCvs.style.display = 'none';
                 showDocUI();
+                try {
+                    if (window.NotebookManager && typeof window.NotebookManager.refreshControls === 'function') {
+                        window.NotebookManager.refreshControls();
+                    }
+                } catch (_) { }
 
                 // 尝试恢复原始文件渲染
                 var filePath = session.file_path || '';
@@ -1214,6 +1438,9 @@
         $currentPage.textContent = idx + 1;
         if ($pageNum) $pageNum.textContent = idx + 1;
         updateThumbActive(idx);
+
+        // 通知 NotebookManager 翻页（用于预览自动滚动）
+        try { if (window.NotebookManager && typeof window.NotebookManager.onPageChanged === 'function') window.NotebookManager.onPageChanged(idx); } catch (e) { }
 
         // 更新翻页按钮
         $prevPage.disabled = idx <= 0;
@@ -1736,6 +1963,8 @@
         // Track which page is currently visible (for sidebar/page indicator sync)
         _scrollPageObserver = new IntersectionObserver(function (entries) {
             if (_scrollSuppressPageUpdate) return;
+            // Round 4: 正在拖拽选择文本时跳过页码更新，避免 observer 回调打断选择。
+            if (state.isSelecting) return;
             var maxRatio = 0;
             var visibleIdx = state.currentPage;
             entries.forEach(function (entry) {
@@ -1753,6 +1982,7 @@
                 $nextPage.disabled = visibleIdx >= state.pageCount - 1;
                 saveWorkspace();
                 renderNote(visibleIdx);
+                try { if (window.NotebookManager && typeof window.NotebookManager.onPageChanged === 'function') window.NotebookManager.onPageChanged(visibleIdx); } catch (e) { }
             }
         }, { root: viewport, rootMargin: '-30% 0px -30% 0px', threshold: [0, 0.25, 0.5, 0.75, 1] });
 
@@ -1826,6 +2056,10 @@
 
     // ── Notes rendering ───────────────────────────────────────────────────────
     function renderNote(idx) {
+        // Round 4 CRITICAL FIX: #notesList DOM 在 Round 2 已删除，$notesList 恒为 null。
+        // 未加此 guard 时，滚动模式下 IntersectionObserver 每帧触发 renderNote →
+        // $notesList.innerHTML 抛 TypeError，中断后续 bookkeeping，并破坏左键拖选状态。
+        if (!$notesList) return;
         var note = state.notes[idx];
         var isGenerating = state.generating[idx];
 
@@ -1955,21 +2189,31 @@
     }
 
     function handleGenerateAll() {
-        if (!state.sessionId) return;
+        // Round 4: #generateAllBtn 已从 DOM 删除。此函数保留以兼容旧事件链接，但直接 no-op。
+        if (!$generateAllBtn || !state.sessionId) return;
+        // 新版：直接生成到当前激活的笔记本（以"自动分区 section"追加到该笔记本末尾）
+        var nbState = (window.NotebookManager && window.NotebookManager.getState)
+            ? window.NotebookManager.getState() : null;
+        var notebookId = nbState ? nbState.activeNotebookId : '';
+        if (!notebookId) {
+            alert('请先在右侧选择一个笔记本，作为本次批量生成的目标。');
+            return;
+        }
         $generateAllBtn.disabled = true;
         $generateAllBtn.innerHTML = '<i data-lucide="sparkles" style="width:14px;height:14px"></i><span>生成中...</span>';
         if (window.lucide) window.lucide.createIcons();
-        $progressBar.classList.add('active');
+        if ($progressBar) $progressBar.classList.add('active');
 
-        invoke('doc_reader_generate_all', {
+        invoke('notebook_generate_auto_sections_for_all', {
+            notebookId: notebookId,
             sessionId: state.sessionId,
-            noteType: getSelectedNoteType(),
         }).catch(function (err) {
-            console.error('generate_all failed:', err);
+            console.error('generate_auto_sections_for_all failed:', err);
             $generateAllBtn.disabled = false;
             $generateAllBtn.innerHTML = '<i data-lucide="sparkles" style="width:14px;height:14px"></i><span>全部生成</span><div class="shimmer"></div>';
             if (window.lucide) window.lucide.createIcons();
-            $progressBar.classList.remove('active');
+            if ($progressBar) $progressBar.classList.remove('active');
+            alert('批量生成失败：' + (err && err.message ? err.message : err));
         });
     }
 
@@ -2088,26 +2332,22 @@
         var panelNotes = document.getElementById('panelNotes');
         if (!resizer || !panelDoc || !panelNotes) return;
 
-        resizer.addEventListener('mousedown', function (e) {
-            e.preventDefault();
-            var startX = e.clientX;
+        function beginDrag(clientX) {
+            var startX = clientX;
             var container = panelDoc.parentElement;
             var totalWidth = container.clientWidth - resizer.offsetWidth;
             var startDocW = panelDoc.offsetWidth;
-            var snapThreshold = 50; // px from edge to trigger snap
-            var snappedSide = null; // 'doc' or 'notes' or null
+            var snapThreshold = 50;
+            var snappedSide = null;
             resizer.classList.add('dragging');
             document.body.style.cursor = 'col-resize';
             document.body.style.userSelect = 'none';
-            document.addEventListener('mousemove', onDrag);
-            document.addEventListener('mouseup', onStop);
 
-            function onDrag(ev) {
-                var diff = ev.clientX - startX;
+            function onDrag(cx) {
+                var diff = cx - startX;
                 var newDocW = startDocW + diff;
                 var notesW = totalWidth - newDocW;
 
-                // Snap detection: near left edge → notes fullscreen
                 if (newDocW < snapThreshold) {
                     snappedSide = 'notes';
                     panelDoc.style.flex = '0 0 0%';
@@ -2115,7 +2355,6 @@
                     resizer.style.opacity = '0.3';
                     return;
                 }
-                // Snap detection: near right edge → doc fullscreen
                 if (notesW < snapThreshold) {
                     snappedSide = 'doc';
                     panelDoc.style.flex = '0 0 100%';
@@ -2126,7 +2365,6 @@
 
                 snappedSide = null;
                 resizer.style.opacity = '';
-                // Minimum 10% for each panel during normal drag
                 var minW = totalWidth * 0.1;
                 newDocW = Math.max(minW, Math.min(totalWidth - minW, newDocW));
                 var docPct = (newDocW / totalWidth) * 100;
@@ -2138,8 +2376,11 @@
                 resizer.style.opacity = '';
                 document.body.style.cursor = '';
                 document.body.style.userSelect = '';
-                document.removeEventListener('mousemove', onDrag);
-                document.removeEventListener('mouseup', onStop);
+                document.removeEventListener('mousemove', onMouseDrag);
+                document.removeEventListener('mouseup', onMouseStop);
+                document.removeEventListener('touchmove', onTouchDrag);
+                document.removeEventListener('touchend', onTouchStop);
+                document.removeEventListener('touchcancel', onTouchStop);
 
                 if (snappedSide === 'notes') {
                     panelDoc.style.flex = '';
@@ -2153,13 +2394,35 @@
                     container.classList.remove('notes-fullscreen');
                 }
 
-                // Re-render PDF to fit new width
                 if (state.isPdf && state.pdfDoc) {
                     state._lastPdfRender = null;
                     deferRenderPdfPage(state.currentPage, 50);
                 }
             }
+
+            function onMouseDrag(ev) { onDrag(ev.clientX); }
+            function onMouseStop() { onStop(); }
+            function onTouchDrag(ev) { if (ev.touches.length === 1) { ev.preventDefault(); onDrag(ev.touches[0].clientX); } }
+            function onTouchStop() { onStop(); }
+
+            return { onMouseDrag: onMouseDrag, onMouseStop: onMouseStop, onTouchDrag: onTouchDrag, onTouchStop: onTouchStop };
+        }
+
+        resizer.addEventListener('mousedown', function (e) {
+            e.preventDefault();
+            var handlers = beginDrag(e.clientX);
+            document.addEventListener('mousemove', handlers.onMouseDrag);
+            document.addEventListener('mouseup', handlers.onMouseStop);
         });
+
+        resizer.addEventListener('touchstart', function (e) {
+            if (e.touches.length !== 1) return;
+            e.preventDefault();
+            var handlers = beginDrag(e.touches[0].clientX);
+            document.addEventListener('touchmove', handlers.onTouchDrag, { passive: false });
+            document.addEventListener('touchend', handlers.onTouchStop);
+            document.addEventListener('touchcancel', handlers.onTouchStop);
+        }, { passive: false });
     }
 
     // ── UI helpers ────────────────────────────────────────────────────────────
@@ -2169,6 +2432,7 @@
     }
 
     function updateNotesCount() {
+        if (!$notesCount) return;
         var count = 0;
         for (var i = 0; i < state.pageCount; i++) {
             if (state.notes[i]) count++;
@@ -2506,6 +2770,314 @@
         }).catch(function (err) {
             console.error('保存模型配置失败:', err);
         });
+    }
+
+    // ── Round 5: 全局等待反馈（顶部进度条 + 底部 toast） ────────────────────
+    var UIBusy = (function () {
+        var stack = 0;
+        var busyBar = null, toast = null, toastMsg = null, toastSpinner = null, toastTimer = null;
+        function ensure() {
+            if (!busyBar) busyBar = document.getElementById('globalBusy');
+            if (!toast) toast = document.getElementById('globalToast');
+            if (!toastMsg) toastMsg = document.getElementById('globalToastMsg');
+            if (!toastSpinner) toastSpinner = document.getElementById('globalToastSpinner');
+        }
+        function refreshBar() {
+            ensure();
+            if (!busyBar) return;
+            busyBar.classList.toggle('active', stack > 0);
+        }
+        function showToast(msg, withSpinner) {
+            ensure();
+            if (!toast || !toastMsg) return;
+            toastMsg.textContent = msg || '';
+            if (toastSpinner) toastSpinner.style.display = withSpinner ? '' : 'none';
+            toast.classList.add('visible');
+        }
+        function hideToast() { ensure(); if (toast) toast.classList.remove('visible'); }
+        return {
+            push: function (msg) {
+                stack++;
+                refreshBar();
+                if (toastTimer) { clearTimeout(toastTimer); toastTimer = null; }
+                showToast(msg || '处理中…', true);
+            },
+            pop: function () {
+                stack = Math.max(0, stack - 1);
+                refreshBar();
+                if (stack === 0) {
+                    // leave toast visible briefly for the explicit .toast() call to overwrite;
+                    // otherwise auto-hide shortly
+                    if (!toastTimer) toastTimer = setTimeout(function () { hideToast(); toastTimer = null; }, 250);
+                }
+            },
+            toast: function (msg, ms, isError) {
+                ensure();
+                if (!toast || !toastMsg) return;
+                if (toastTimer) { clearTimeout(toastTimer); toastTimer = null; }
+                showToast(msg, false);
+                toast.style.background = isError ? '#b91c1c' : '';
+                toast.style.color = isError ? '#fff' : '';
+                toastTimer = setTimeout(function () { hideToast(); toast.style.background = ''; toast.style.color = ''; toastTimer = null; }, ms || 1800);
+            },
+        };
+    })();
+    window.UIBusy = UIBusy;
+
+    // ── Round 7: Agent 聊天浮窗 —— 固定尺寸 + 可拖拽缩放 + 上下文徽章 + 建议词 ────
+    function setupAgentChatPopup() {
+        var pop = document.getElementById('agentChatPop');
+        var openBtn = document.getElementById('agentChatBtn');
+        var closeBtn = document.getElementById('agentChatClose');
+        var clearBtn = document.getElementById('agentChatClear');
+        var body = document.getElementById('agentChatBody');
+        var emptyEl = document.getElementById('agentChatEmpty');
+        var input = document.getElementById('agentChatInput');
+        var sendBtn = document.getElementById('agentChatSend');
+        var header = document.getElementById('agentChatHeader');
+        var ctxPage = document.getElementById('agentCtxPage');
+        var ctxSel = document.getElementById('agentCtxSelection');
+        if (!pop || !body || !input || !sendBtn) return;
+
+        var history = [];
+
+        // 持久化尺寸
+        try {
+            var savedW = parseInt(localStorage.getItem('agentPopW') || '0', 10);
+            var savedH = parseInt(localStorage.getItem('agentPopH') || '0', 10);
+            if (savedW >= 340) pop.style.setProperty('--agent-w', savedW + 'px');
+            if (savedH >= 380) pop.style.setProperty('--agent-h', savedH + 'px');
+        } catch (_) {}
+
+        function syncEmpty() {
+            if (!emptyEl) return;
+            emptyEl.style.display = body.children.length === 0 ? 'flex' : 'none';
+        }
+        syncEmpty();
+
+        function updateContextChips() {
+            if (ctxPage) {
+                var pageText = '第 ' + (Number(state.currentPage || 0) + 1) + ' 页';
+                if (state.totalPages) pageText += ' / ' + state.totalPages;
+                ctxPage.querySelector('span').textContent = pageText;
+            }
+            if (ctxSel) {
+                var sel = (window.getSelection && window.getSelection().toString().trim()) || '';
+                var chip = ctxSel.querySelector('span');
+                if (sel) {
+                    ctxSel.classList.remove('muted');
+                    var preview = sel.length > 18 ? sel.slice(0, 18) + '…' : sel;
+                    chip.textContent = '选取：' + preview;
+                    ctxSel.title = sel;
+                } else {
+                    ctxSel.classList.add('muted');
+                    chip.textContent = '未选取';
+                    ctxSel.title = '未选择文本';
+                }
+            }
+        }
+
+        function open() {
+            pop.classList.add('open');
+            updateContextChips();
+            if (window.lucide) { try { window.lucide.createIcons(); } catch (_) {} }
+            setTimeout(function () { input.focus(); }, 80);
+        }
+        function close() { pop.classList.remove('open'); }
+        function toggle() { pop.classList.contains('open') ? close() : open(); }
+
+        if (openBtn) openBtn.addEventListener('click', toggle);
+        if (closeBtn) closeBtn.addEventListener('click', close);
+        if (clearBtn) clearBtn.addEventListener('click', function () {
+            history = [];
+            body.innerHTML = '';
+            syncEmpty();
+            if (window.UIBusy) window.UIBusy.toast('已清空对话');
+            input.focus();
+        });
+
+        // Ctrl/Cmd + K 全局快捷键
+        document.addEventListener('keydown', function (e) {
+            if ((e.ctrlKey || e.metaKey) && (e.key === 'k' || e.key === 'K')) {
+                e.preventDefault(); toggle();
+            } else if (e.key === 'Escape' && pop.classList.contains('open')) {
+                close();
+            }
+        });
+
+        // 选区变化时更新徽章
+        document.addEventListener('selectionchange', function () {
+            if (pop.classList.contains('open')) updateContextChips();
+        });
+
+        input.addEventListener('input', function () {
+            sendBtn.disabled = !input.value.trim();
+            input.style.height = 'auto';
+            input.style.height = Math.min(160, input.scrollHeight) + 'px';
+        });
+        input.addEventListener('keydown', function (e) {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                if (input.value.trim()) send();
+            }
+        });
+        sendBtn.addEventListener('click', function () { if (input.value.trim()) send(); });
+
+        // 空态建议词：点击 → 直接发送
+        document.querySelectorAll('#agentChatSuggestions .agent-suggestion').forEach(function (btn) {
+            btn.addEventListener('click', function () {
+                var q = btn.getAttribute('data-prefill') || btn.textContent.trim();
+                input.value = q;
+                input.dispatchEvent(new Event('input'));
+                send();
+            });
+        });
+
+        function addMsg(role, innerHtml, raw) {
+            var d = document.createElement('div');
+            d.className = 'agent-msg ' + role;
+            var avatarHtml;
+            if (role === 'user') {
+                avatarHtml = '<div class="agent-avatar">你</div>';
+            } else if (role === 'thinking') {
+                avatarHtml = '<div class="agent-avatar"><i data-lucide="sparkles" style="width:11px;height:11px"></i></div>';
+            } else {
+                avatarHtml = '<div class="agent-avatar"><i data-lucide="sparkles" style="width:11px;height:11px"></i></div>';
+            }
+            d.innerHTML = avatarHtml + '<div class="agent-bubble">' + innerHtml + '</div>';
+            if (raw != null) d.dataset.raw = raw;
+            body.appendChild(d);
+            if (window.lucide) { try { window.lucide.createIcons(); } catch (_) {} }
+            body.scrollTop = body.scrollHeight;
+            syncEmpty();
+            return d;
+        }
+
+        function send() {
+            var q = input.value.trim();
+            if (!q) return;
+            addMsg('user', escapeHtml(q));
+            input.value = '';
+            input.style.height = 'auto';
+            sendBtn.disabled = true;
+            var thinking = addMsg('thinking', '<span class="spinner"></span><span>思考中…</span>');
+
+            // 上下文：当前页文本 +（如果有选区）选区文本
+            var selText = (window.getSelection && window.getSelection().toString().trim()) || '';
+            var textPromise;
+            if (state.isPdf && state.pdfDoc) {
+                textPromise = state.pdfDoc.getPage(state.currentPage + 1).then(function (page) {
+                    return page.getTextContent();
+                }).then(function (tc) {
+                    return tc.items.map(function (it) { return it.str; }).join(' ');
+                }).catch(function () { return ''; });
+            } else if (state.pageContents && state.pageContents[state.currentPage] !== undefined) {
+                textPromise = Promise.resolve(state.pageContents[state.currentPage]);
+            } else {
+                textPromise = Promise.resolve('');
+            }
+
+            textPromise.then(function (pageText) {
+                var hist = history.map(function (m) { return [m.role, m.content]; });
+                var fullContext = pageText || '';
+                if (selText) {
+                    fullContext = '【用户当前选中的片段】\n' + selText + '\n\n【整页内容】\n' + fullContext;
+                }
+                return invoke('doc_reader_chat', {
+                    sessionId: state.sessionId,
+                    question: q,
+                    pageIndex: state.currentPage,
+                    pageContent: fullContext || null,
+                    history: hist.length ? hist : null,
+                });
+            }).then(function (res) {
+                if (thinking && thinking.parentNode) thinking.remove();
+                var ans = (res && res.answer) || '(空回复)';
+                var md = '<div class="markdown-body">' + renderMarkdown(ans) + '</div>';
+                var el = addMsg('assistant', md, ans);
+                var mdEl = el.querySelector('.markdown-body');
+                if (mdEl) postProcessMarkdown(mdEl);
+                history.push({ role: 'user', content: q });
+                history.push({ role: 'assistant', content: ans });
+                if (history.length > 20) history = history.slice(-20);
+            }).catch(function (err) {
+                if (thinking && thinking.parentNode) thinking.remove();
+                addMsg('assistant', '<span style="color:#ef4444;">出错：' + escapeHtml(String(err)) + '</span>');
+            }).finally(function () {
+                sendBtn.disabled = !input.value.trim();
+                input.focus();
+                syncEmpty();
+            });
+        }
+
+        // ── 拖拽移动（仅 header） ──
+        (function () {
+            var dragging = false, startX, startY, origRight, origBottom;
+            header.addEventListener('mousedown', function (e) {
+                if (e.target.closest('.head-btn')) return;
+                dragging = true;
+                startX = e.clientX; startY = e.clientY;
+                var r = pop.getBoundingClientRect();
+                origRight = window.innerWidth - r.right;
+                origBottom = window.innerHeight - r.bottom;
+                document.body.style.userSelect = 'none';
+            });
+            document.addEventListener('mousemove', function (e) {
+                if (!dragging) return;
+                var dx = e.clientX - startX, dy = e.clientY - startY;
+                pop.style.right = Math.max(0, origRight - dx) + 'px';
+                pop.style.bottom = Math.max(0, origBottom - dy) + 'px';
+            });
+            document.addEventListener('mouseup', function () {
+                if (!dragging) return;
+                dragging = false;
+                document.body.style.userSelect = '';
+            });
+        })();
+
+        // ── 缩放手柄（左/上/左上/右上）──
+        (function () {
+            var resizing = null, startX, startY, startW, startH, startRight, startBottom;
+            pop.querySelectorAll('.agent-resize-handle').forEach(function (h) {
+                h.addEventListener('mousedown', function (e) {
+                    e.preventDefault(); e.stopPropagation();
+                    resizing = h.getAttribute('data-resize');
+                    startX = e.clientX; startY = e.clientY;
+                    var r = pop.getBoundingClientRect();
+                    startW = r.width; startH = r.height;
+                    startRight = window.innerWidth - r.right;
+                    startBottom = window.innerHeight - r.bottom;
+                    document.body.style.userSelect = 'none';
+                    document.body.style.cursor = h.style.cursor || getComputedStyle(h).cursor;
+                });
+            });
+            document.addEventListener('mousemove', function (e) {
+                if (!resizing) return;
+                var dx = e.clientX - startX, dy = e.clientY - startY;
+                var newW = startW, newH = startH;
+                // 浮窗锚定在右下，所以左/上拖：尺寸增减；右/下不需要（已锚定）
+                if (resizing.indexOf('l') >= 0 || resizing === 'tl') newW = startW - dx;
+                if (resizing.indexOf('r') >= 0 || resizing === 'tr') newW = startW + dx;
+                if (resizing.indexOf('t') >= 0) newH = startH - dy;
+                if (resizing.indexOf('b') >= 0) newH = startH + dy;
+                newW = Math.max(340, Math.min(window.innerWidth - 32, newW));
+                newH = Math.max(380, Math.min(window.innerHeight - 48, newH));
+                pop.style.setProperty('--agent-w', newW + 'px');
+                pop.style.setProperty('--agent-h', newH + 'px');
+            });
+            document.addEventListener('mouseup', function () {
+                if (!resizing) return;
+                resizing = null;
+                document.body.style.userSelect = '';
+                document.body.style.cursor = '';
+                // 持久化
+                try {
+                    var r = pop.getBoundingClientRect();
+                    localStorage.setItem('agentPopW', String(Math.round(r.width)));
+                    localStorage.setItem('agentPopH', String(Math.round(r.height)));
+                } catch (_) {}
+            });
+        })();
     }
 
     // ── Expose ───────────────────────────────────────────────────────────────

@@ -1,0 +1,92 @@
+@import './tokens.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  *,
+  *::before,
+  *::after {
+    box-sizing: border-box;
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+    margin: 0;
+    padding: 0;
+  }
+
+  body {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    background: var(--bg);
+    color: var(--text-1);
+    font-size: var(--text-base);
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    overflow: hidden;
+  }
+
+  /* 默认允许文本选择；仅在标题栏 / 侧边栏等用 .select-none 显式禁用 */
+  body {
+    -webkit-user-select: text;
+    user-select: text;
+  }
+
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: var(--surface-2);
+    border-radius: var(--radius-full);
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--surface-3);
+  }
+}
+
+/* ── PDF.js text layer：样式来自 pdfjs-dist/web/pdf_viewer.css ──────────
+   官方样式负责 transparent span 的绝对定位、RTL / 断行的细节。此处只
+   覆盖选中高亮色以匹配项目 accent 色调。 */
+.textLayer ::selection {
+  background: rgba(124, 92, 252, 0.35);
+}
+
+@layer components {
+  .glass-card {
+    background: var(--card-glass);
+    backdrop-filter: blur(18px);
+    border: 1px solid var(--border-1);
+    border-radius: var(--radius-lg);
+  }
+}
+
+/* 学习面板：屏切换淡入 + 微上滑（key remount 触发，每次切屏都跑一次） */
+@keyframes screen-enter {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.agent-screen-enter {
+  animation: screen-enter 280ms cubic-bezier(0.32, 0.72, 0.34, 1);
+}
+@media (prefers-reduced-motion: reduce) {
+  .agent-screen-enter {
+    animation: none;
+  }
+}
