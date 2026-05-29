@@ -13,6 +13,13 @@
  *   - 全部答完前的"开始学习"按钮禁用；可选最后一题为补充框
  *
  * 失败兜底：LLM 失败 / 解析失败时直接给出"跳过 wizard, 直接开始学习"按钮。
+ *
+ * v9 (2026-05) 用户反馈："切到其他标签页再回来，wizard 又从头开始"：
+ *   - 把 questions / answers / freeNote 持久化到 sessionStorage（按 sessionId 隔离）
+ *   - 路由切走 / AgentTab unmount 时 React state 销毁，sessionStorage 数据保留
+ *   - 重新 mount 时 lazy initializer 从 sessionStorage 复原，不重新调 LLM 出题
+ *   - 提交 / 跳过 / 取消时 clearPersisted 清理，避免下次重开 wizard 看到旧答案
+ *   - sessionStorage 在窗口（Tauri webview）关闭时自动清理，符合"只要软件没关"的语义
  */
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { ArrowRight, Loader2, RotateCcw, Sparkles, SkipForward, AlertCircle } from 'lucide-react'
@@ -40,12 +47,52 @@ interface Props {
   onCancel?: () => void
 }
 
+// ── sessionStorage 持久化（按 sessionId 隔离） ──────────────────────────
+//
+// 仅持久化用户**已经投入的输入**：LLM 出的题目 + 用户的选择 + 自由补充。
+// loading / error / submitting 等瞬态状态不存。
+const wizardStorageKey = (sessionId: string) => `agent:wizard:${sessionId}`
+
+interface PersistedWizardState {
+  questions: WizardQuestion[]
+  answers: Record<string, string>
+  freeNote: string
+}
+
+function loadPersistedWizard(sessionId: string): PersistedWizardState | null {
+  try {
+    const raw = sessionStorage.getItem(wizardStorageKey(sessionId))
+    if (!raw) return null
+    const p = JSON.parse(raw) as Partial<PersistedWizardState>
+    if (!Array.isArray(p?.questions)) return null
+    return {
+      questions: p.questions,
+      answers: p.answers && typeof p.answers === 'object' ? p.answers : {},
+      freeNote: typeof p.freeNote === 'string' ? p.freeNote : '',
+    }
+  } catch {
+    return null
+  }
+}
+
+function clearPersistedWizard(sessionId: string) {
+  try {
+    sessionStorage.removeItem(wizardStorageKey(sessionId))
+  } catch {
+    /* ignore quota / privacy mode */
+  }
+}
+
 export function LearningWizardCard({ sessionId, onSubmit, onCancel }: Props) {
-  const [questions, setQuestions] = useState<WizardQuestion[]>([])
-  const [loading, setLoading] = useState(true)
+  // 仅在首次 mount 时读 sessionStorage（lazy initializer）；sessionId 变化由父级换 key 处理
+  const persisted = useMemo(() => loadPersistedWizard(sessionId), [sessionId])
+
+  const [questions, setQuestions] = useState<WizardQuestion[]>(() => persisted?.questions ?? [])
+  // 有缓存 questions 时不显示 loading（直接复原即可），否则等 LLM 出题
+  const [loading, setLoading] = useState<boolean>(() => !(persisted && persisted.questions.length > 0))
   const [error, setError] = useState('')
-  const [answers, setAnswers] = useState<Record<string, string>>({})
-  const [freeNote, setFreeNote] = useState('')
+  const [answers, setAnswers] = useState<Record<string, string>>(() => persisted?.answers ?? {})
+  const [freeNote, setFreeNote] = useState<string>(() => persisted?.freeNote ?? '')
   const [submitting, setSubmitting] = useState(false)
 
   const loadQuestions = useCallback(async () => {
@@ -71,8 +118,25 @@ export function LearningWizardCard({ sessionId, onSubmit, onCancel }: Props) {
   }, [sessionId])
 
   useEffect(() => {
+    // 已经从 sessionStorage 复原到题目了 → 跳过 LLM 调用
+    if (questions.length > 0) return
     void loadQuestions()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loadQuestions])
+
+  // 写回 sessionStorage：只要有题目就把当前 answers / freeNote 一起 snapshot
+  // （没题目时不存，避免持久化空壳）
+  useEffect(() => {
+    if (questions.length === 0) return
+    try {
+      sessionStorage.setItem(
+        wizardStorageKey(sessionId),
+        JSON.stringify({ questions, answers, freeNote } satisfies PersistedWizardState),
+      )
+    } catch {
+      /* ignore quota / privacy mode */
+    }
+  }, [sessionId, questions, answers, freeNote])
 
   const answeredCount = useMemo(
     () => questions.filter((q) => !!answers[q.id]).length,
@@ -102,19 +166,29 @@ export function LearningWizardCard({ sessionId, onSubmit, onCancel }: Props) {
     try {
       const prefs = buildUserPreferences()
       await onSubmit(prefs.length > 0 ? prefs : null)
+      // 提交成功后清掉持久化（下次重开 wizard 不会脏）
+      clearPersistedWizard(sessionId)
     } finally {
       setSubmitting(false)
     }
-  }, [buildUserPreferences, onSubmit])
+  }, [buildUserPreferences, onSubmit, sessionId])
 
   const handleSkip = useCallback(async () => {
     setSubmitting(true)
     try {
       await onSubmit(null)
+      clearPersistedWizard(sessionId)
     } finally {
       setSubmitting(false)
     }
-  }, [onSubmit])
+  }, [onSubmit, sessionId])
+
+  // 用户主动「← 返回」：清掉持久化（用户改主意 → 不该残留旧答案）。
+  // 路由切走（unmount）走的是默认 cleanup 路径，不进这里 → sessionStorage 保留。
+  const handleCancel = useCallback(() => {
+    clearPersistedWizard(sessionId)
+    onCancel?.()
+  }, [onCancel, sessionId])
 
   // ─── 渲染 ─────────────────────────────────────────────────────────
   // 注意：滚动容器**不能**用 `flex items-center`，否则当内容高于视口时，
@@ -250,7 +324,7 @@ export function LearningWizardCard({ sessionId, onSubmit, onCancel }: Props) {
               {onCancel && (
                 <button
                   type="button"
-                  onClick={onCancel}
+                  onClick={handleCancel}
                   className="text-[12px] text-text-3 transition hover:text-text-2"
                 >
                   ← 返回

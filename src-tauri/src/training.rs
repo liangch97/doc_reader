@@ -183,7 +183,7 @@ pub struct CodeRunResult {
 }
 
 /// 判断 endpoint 的 host 是否是 localhost / loopback / 私网地址（用来决定要不要绕过代理）
-fn endpoint_is_localhost_or_private(endpoint: &str) -> bool {
+pub fn endpoint_is_localhost_or_private(endpoint: &str) -> bool {
     // 简单解析：找 "://" 之后第一个 '/'  或 '?' 之前那段，再去掉 ":port"
     let after_scheme = endpoint.split("://").nth(1).unwrap_or(endpoint);
     let host_with_port = after_scheme
@@ -232,18 +232,43 @@ async fn resolve_installed_version(
     target_lang: &str,
 ) -> Result<String, String> {
     let url = execute_to_runtimes_endpoint(execute_endpoint);
-    let resp = client.get(&url).send().await.map_err(|e| {
-        format!("查询已装语言列表失败（{url} 不可达）：{e}\n（这一步是为了把 version=\"*\" 解析成精确版本号 —— Piston execute 端点不接受通配。）")
-    })?;
-    if !resp.status().is_success() {
-        let status = resp.status();
-        let txt = resp.text().await.unwrap_or_default();
-        return Err(format!("查询 /runtimes 返回 {}: {}", status, txt));
-    }
-    let arr: Vec<Value> = resp
-        .json()
-        .await
-        .map_err(|e| format!("解析 /runtimes 响应失败：{e}"))?;
+
+    // GET /runtimes —— reqwest 失败时走裸 TCP 兜底（同 piston_execute 的兜底逻辑）
+    let arr: Vec<Value> = match client.get(&url).send().await {
+        Ok(resp) => {
+            if !resp.status().is_success() {
+                let status = resp.status();
+                let txt = resp.text().await.unwrap_or_default();
+                return Err(format!("查询 /runtimes 返回 {}: {}", status, txt));
+            }
+            resp.json().await.map_err(|e| format!("解析 /runtimes 响应失败：{e}"))?
+        }
+        Err(e) => {
+            let detailed = format!("查询已装语言列表失败（{url} 不可达）：{e}\n（这一步是为了把 version=\"*\" 解析成精确版本号 —— Piston execute 端点不接受通配。）");
+            // 本地 endpoint 走裸 TCP 兜底
+            if !endpoint_is_localhost_or_private(execute_endpoint) {
+                return Err(detailed);
+            }
+            log::warn!("[resolve_installed_version] reqwest 失败,尝试裸 TCP 兜底\n{detailed}");
+            let raw_url = url.clone();
+            let r = tokio::task::spawn_blocking(move || {
+                crate::runtime::raw_http_request(
+                    "GET",
+                    &raw_url,
+                    None,
+                    std::time::Duration::from_secs(15),
+                )
+            })
+            .await
+            .map_err(|e| format!("raw_tcp spawn 失败: {e}"))?;
+            let (code, text) = r.map_err(|e| format!("{detailed}\n\n--- 裸 TCP 兜底也失败 ---\n{e}"))?;
+            if !(200..300).contains(&code) {
+                return Err(format!("[raw_tcp] 查询 /runtimes 返回 HTTP {code}: {text}"));
+            }
+            log::info!("[resolve_installed_version] 裸 TCP 兜底成功");
+            serde_json::from_str(&text).map_err(|e| format!("解析裸 TCP 响应失败: {e}\nbody: {text}"))?
+        }
+    };
 
     // 匹配规则：language 字段 == target_lang，或 aliases 数组里包含 target_lang
     let target_l = target_lang.to_lowercase();
@@ -316,29 +341,61 @@ pub async fn piston_execute(
     }
     let started = std::time::Instant::now();
 
-    // 文件名按语言推导（Piston 要求要有合法文件名扩展）
-    let filename = match language {
+    // 文件名按语言推导（Piston 要求要有合法文件名扩展 / 大小写约定）
+    let filename = match language.to_lowercase().as_str() {
         "python" => "main.py",
-        "javascript" | "node" => "main.js",
-        "typescript" => "main.ts",
+        "javascript" | "node" | "js" => "main.js",
+        "typescript" | "ts" => "main.ts",
         "rust" => "main.rs",
         "java" => "Main.java",
+        "kotlin" => "main.kt",
+        "scala" => "Main.scala",
+        "groovy" => "main.groovy",
         "c" => "main.c",
         "cpp" | "c++" => "main.cpp",
         "go" => "main.go",
         "ruby" => "main.rb",
-        "kotlin" => "main.kt",
         "swift" => "main.swift",
-        "csharp" | "c#" => "Main.cs",
+        "csharp" | "c#" | "mono" => "Main.cs",
+        "dotnet" => "Program.cs",
+        "php" => "main.php",
+        "perl" => "main.pl",
+        "haskell" => "main.hs",
+        "lua" => "main.lua",
+        "dart" => "main.dart",
+        "elixir" => "main.exs",
+        "erlang" => "main.erl",
+        "julia" => "main.jl",
+        "nim" => "main.nim",
+        "zig" => "main.zig",
+        "crystal" => "main.cr",
+        "clojure" => "main.clj",
+        "ocaml" => "main.ml",
+        "racket" => "main.rkt",
+        "pascal" => "main.pp",
+        "bash" | "sh" => "main.sh",
+        "powershell" | "pwsh" => "main.ps1",
+        "r" | "rscript" => "main.r",
+        "v" | "vlang" => "main.v",
+        "lisp" | "common-lisp" => "main.lisp",
+        "fortran" => "main.f90",
+        "cobol" => "main.cob",
+        "sqlite3" | "sql" => "main.sql",
         _ => "main.txt",
     };
-    // Piston 用的语言别名规范化
-    let lang_normalized = match language {
+    // Piston 用的语言别名规范化（execute 时用 runtime aliases 匹配）
+    let lang_normalized = match language.to_lowercase().as_str() {
         "node" | "js" => "javascript",
         "ts" => "typescript",
         "c++" => "cpp",
         "c#" => "csharp",
-        other => other,
+        "v" => "vlang",
+        "r" => "rscript",
+        "powershell" | "ps" | "ps1" => "pwsh",
+        "common-lisp" | "commonlisp" => "lisp",
+        "sh" => "bash",
+        // 保留原值（已是 Piston runtime language 名）
+        _ => language,
     };
 
     // v6 (2026-05) #3++ 修订：localhost / 私网 endpoint 必须禁用系统代理
@@ -376,14 +433,15 @@ pub async fn piston_execute(
         "run_timeout": 3000,
     });
 
-    let resp = client
-        .post(endpoint)
-        .json(&body)
-        .send()
-        .await
-        .map_err(|e| {
+    // 发请求 —— reqwest 失败时给 localhost 路径走裸 TCP 兜底（绕过 hyper / proxy / DNS）
+    let (status_code, response_text) = match client.post(endpoint).json(&body).send().await {
+        Ok(resp) => {
+            let code = resp.status().as_u16();
+            let txt = resp.text().await.map_err(|e| format!("读取响应失败: {e}"))?;
+            (code, txt)
+        }
+        Err(e) => {
             let mut hint = String::new();
-            // reqwest::Error 自带分类
             if e.is_connect() {
                 hint.push_str("\n常见原因：\n  · Piston 容器没有运行（请到「设置 → 代码运行」检查容器状态）\n  · 端口 2000 被其他程序占用 / 被防火墙挡住");
             } else if e.is_request() && is_local {
@@ -391,26 +449,54 @@ pub async fn piston_execute(
             } else if !is_local {
                 hint.push_str("\n常见原因：\n  · 网络问题 / DNS 解析失败 / TLS 握手失败");
             }
-            format!("Piston 请求失败（{endpoint} 不可达）: {}{hint}", e)
-        })?;
+            let detailed = format!("Piston 请求失败（{endpoint} 不可达）: {e}{hint}");
 
-    let status = resp.status();
-    if !status.is_success() {
-        let txt = resp.text().await.unwrap_or_default();
+            // 本地 endpoint：尝试裸 TCP 兜底
+            if is_local {
+                log::warn!("[piston_execute] reqwest 失败，尝试裸 TCP 兜底\n{detailed}");
+                let body_bytes = serde_json::to_vec(&body).unwrap_or_default();
+                let raw_endpoint = endpoint.to_string();
+                let r = tokio::task::spawn_blocking(move || {
+                    crate::runtime::raw_http_request(
+                        "POST",
+                        &raw_endpoint,
+                        Some(&body_bytes),
+                        std::time::Duration::from_secs(25),
+                    )
+                })
+                .await
+                .map_err(|e| format!("raw_tcp spawn 失败: {e}"))?;
+                match r {
+                    Ok((code, text)) => {
+                        log::info!("[piston_execute] 裸 TCP 兜底成功 (HTTP {code})");
+                        (code, text)
+                    }
+                    Err(raw_err) => {
+                        return Err(format!("{detailed}\n\n--- 裸 TCP 兜底也失败 ---\n{raw_err}"));
+                    }
+                }
+            } else {
+                return Err(detailed);
+            }
+        }
+    };
+
+    if !(200..300).contains(&status_code) {
         // 401 一般是公共节点白名单 / 私有节点 token 错。给用户明确提示
-        if status.as_u16() == 401 {
+        if status_code == 401 {
             return Err(format!(
                 "Piston 返回 401 Unauthorized：该节点已限制访问（emkc 公共 API 已于 2026/2/15 改为白名单）。\n\
                  请到「设置 → 代码运行」更换 endpoint，推荐自部署：\n  \
                  docker run -d --rm -p 2000:2000 ghcr.io/engineer-man/piston\n  \
-                 然后 endpoint 填 http://localhost:2000/api/v2/execute\n\n\
-                 原始响应：{txt}"
+                 然后 endpoint 填 http://127.0.0.1:2000/api/v2/execute\n\n\
+                 原始响应：{response_text}"
             ));
         }
-        return Err(format!("Piston 返回 {}: {}", status, txt));
+        return Err(format!("Piston 返回 {status_code}: {response_text}"));
     }
 
-    let json_body: Value = resp.json().await.map_err(|e| format!("Piston 响应非 JSON: {}", e))?;
+    let json_body: Value = serde_json::from_str(&response_text)
+        .map_err(|e| format!("Piston 响应非 JSON: {e}\nbody: {response_text}"))?;
     // run 段是必有的；compile 段（如果存在）失败也算运行失败
     let run = json_body.get("run").cloned().unwrap_or(json!({}));
     let compile = json_body.get("compile").cloned().unwrap_or(Value::Null);

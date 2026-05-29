@@ -5820,12 +5820,45 @@ pub async fn agent_followup_stream(
         return Err("本单元尚未生成讲解，无法追问".to_string());
     }
 
+    // best-effort RAG 检索：有 embedding 模型 + 索引就绪才走，否则空 vec
+    //（与 rag_chat_stream 同源；失败一律降级为"仅基于单元讲解"）。
+    let retrieved: Vec<rag::RetrievedChunk> = {
+        let index_ready = {
+            match state.db.lock() {
+                Ok(conn) => matches!(
+                    db::rag_get_meta(&conn, &session_id),
+                    Ok(Some(ref m)) if m.get("status").and_then(|s| s.as_str()) == Some("ready")
+                ),
+                Err(_) => false,
+            }
+        };
+        if !index_ready {
+            Vec::new()
+        } else {
+            match build_embedding_client(&state) {
+                Ok(embed_llm) => {
+                    rag::retrieve(state.db.clone(), &embed_llm, &session_id, &question, 5)
+                        .await
+                        .unwrap_or_else(|e| {
+                            log::warn!("[agent_followup] retrieve 失败 → 仅基于单元讲解: {e}");
+                            Vec::new()
+                        })
+                }
+                Err(e) => {
+                    log::warn!("[agent_followup] build_embedding_client 失败 → 仅基于单元讲解: {e}");
+                    Vec::new()
+                }
+            }
+        }
+    };
+
     let prev = prev_followups.unwrap_or_default();
     let messages = agent::build_unit_followup_messages(
         &doc_title,
         &unit_title,
         &unit_explanation,
         &prev,
+        &retrieved,
         &question,
     );
 

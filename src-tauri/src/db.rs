@@ -276,6 +276,22 @@ pub fn init_db(app_handle: &AppHandle) -> Result<(), Box<dyn std::error::Error>>
         [],
     );
 
+    // v10 (2026-05) 学习流断点续传：agent_unit_states 加 partial_explanation 字段
+    // 流式讲解过程中（agent_teach_unit_stream / agent_prefetch_unit）每隔约 1s
+    // 把当前累积的 raw markdown 写到这一列；流自然结束（done）会清空，流意外
+    // 失败（网络中断 / app 崩溃）时该列保留最后一次落盘的内容。
+    //
+    // 前端首次加载 / 刷新后通过 agent_get_state 看到 partial_explanation 非空 +
+    // current_phase=teaching/idle 即识别为「中断态」，给用户一个「继续生成」按钮。
+    // 调用 agent_teach_unit_stream(resume=true) 时后端把 partial 注入 LLM 的
+    // assistant turn，让模型从断点接着续写。
+    ensure_column_exists(
+        &conn,
+        "agent_unit_states",
+        "partial_explanation",
+        "TEXT NOT NULL DEFAULT ''",
+    )?;
+
     // ════════════════════════════════════════════════════════════════════════
     // RAG 知识库：每本书一个本地向量索引
     // ════════════════════════════════════════════════════════════════════════
@@ -1735,7 +1751,7 @@ pub fn agent_get_state(conn: &Connection, session_id: &str) -> Result<Value, Str
 
     let mut stmt = conn
         .prepare(
-            "SELECT unit_index, teach_pack_json, answers_json, status, retries, updated_at
+            "SELECT unit_index, teach_pack_json, answers_json, status, retries, updated_at, partial_explanation
              FROM agent_unit_states WHERE session_id = ?1 ORDER BY unit_index ASC",
         )
         .map_err(|e| format!("查询 agent_unit_states 失败: {e}"))?;
@@ -1753,6 +1769,7 @@ pub fn agent_get_state(conn: &Connection, session_id: &str) -> Result<Value, Str
             } else {
                 serde_json::from_str(&answers_str).unwrap_or(Value::Array(Vec::new()))
             };
+            let partial: String = r.get::<_, String>(6).unwrap_or_default();
             Ok(json!({
                 "unit_index": r.get::<_, i64>(0)?,
                 "teach_pack": teach_pack,
@@ -1760,6 +1777,7 @@ pub fn agent_get_state(conn: &Connection, session_id: &str) -> Result<Value, Str
                 "status": r.get::<_, String>(3)?,
                 "retries": r.get::<_, i64>(4)?,
                 "updated_at": r.get::<_, String>(5)?,
+                "partial_explanation": partial,
             }))
         })
         .map_err(|e| format!("遍历 agent_unit_states 失败: {e}"))?;
@@ -1905,6 +1923,71 @@ pub fn agent_get_teach_pack(
             Ok(Some(v))
         }
     }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// v10 (2026-05) 学习流断点续传：partial_explanation 持久化
+// ════════════════════════════════════════════════════════════════════════════
+//
+// 设计：流式过程中后台 task 每攒到 ≥ 200 chars 或每过 1s 写一次本列。
+//   - 流自然 done 时 caller 调 agent_clear_partial_explanation 清空（避免误判中断）
+//   - 流意外失败 / app 进程退出时该列保留最后一次写入；重启后前端可见 "已部分生成"
+//   - resume 时把这列内容作为 assistant turn 注入 LLM 输入，模型从断点续写
+
+/// 写入或更新某单元的部分流式 markdown（INSERT ... ON CONFLICT 幂等）。
+/// 与 agent_save_teach_pack 共用同一行；当 teach_pack 为空、partial 非空时表示
+/// "讲解尚未完成、有断点可续"。
+pub fn agent_save_partial_explanation(
+    conn: &Connection,
+    session_id: &str,
+    unit_index: usize,
+    partial: &str,
+) -> Result<(), String> {
+    let now = chrono::Local::now().to_rfc3339();
+    conn.execute(
+        "INSERT INTO agent_unit_states
+            (session_id, unit_index, teach_pack_json, answers_json, status, retries, updated_at, partial_explanation)
+         VALUES (?1, ?2, '', '', 'teaching', 0, ?3, ?4)
+         ON CONFLICT(session_id, unit_index) DO UPDATE SET
+            partial_explanation = excluded.partial_explanation,
+            updated_at          = excluded.updated_at",
+        params![session_id, unit_index as i64, now, partial],
+    )
+    .map_err(|e| format!("保存 partial_explanation 失败: {e}"))?;
+    Ok(())
+}
+
+/// 清空某单元的 partial_explanation。流自然 done 时由 caller 调用，避免遗留误判。
+pub fn agent_clear_partial_explanation(
+    conn: &Connection,
+    session_id: &str,
+    unit_index: usize,
+) -> Result<(), String> {
+    conn.execute(
+        "UPDATE agent_unit_states SET partial_explanation = ''
+         WHERE session_id = ?1 AND unit_index = ?2",
+        params![session_id, unit_index as i64],
+    )
+    .map_err(|e| format!("清空 partial_explanation 失败: {e}"))?;
+    Ok(())
+}
+
+/// 读取某单元的 partial_explanation。空字符串视为"无断点"。
+pub fn agent_get_partial_explanation(
+    conn: &Connection,
+    session_id: &str,
+    unit_index: usize,
+) -> Result<String, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT partial_explanation FROM agent_unit_states
+             WHERE session_id = ?1 AND unit_index = ?2",
+        )
+        .map_err(|e| format!("查询 partial_explanation 失败: {e}"))?;
+    let row: Option<String> = stmt
+        .query_row(params![session_id, unit_index as i64], |r| r.get(0))
+        .ok();
+    Ok(row.unwrap_or_default())
 }
 
 // ──────────────────────────────────────────────────────────────────────────

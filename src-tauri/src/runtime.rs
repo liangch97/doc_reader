@@ -29,36 +29,233 @@ pub const PISTON_CONTAINER_NAME: &str = "doc-reader-piston";
 /// 默认端口
 pub const PISTON_HOST_PORT: u16 = 2000;
 /// 默认 endpoint —— 容器跑起来后要写到 app_prefs.code_runner.endpoint
+///
+/// **注意用 `127.0.0.1` 而不是 `localhost`**：
+/// Windows 的 `localhost` 默认 IPv6 优先解析到 `::1`，但 Docker Desktop on Windows
+/// 的端口转发只监听 IPv4 → reqwest 命中 `::1` 后直接 connect 失败 / 超时
+/// （表现：`error sending request for url ...` 立即出错）。
+/// 用 `127.0.0.1` 字面量绕过 DNS 解析顺序问题。
 pub fn default_endpoint() -> String {
-    format!("http://localhost:{PISTON_HOST_PORT}/api/v2/execute")
+    format!("http://127.0.0.1:{PISTON_HOST_PORT}/api/v2/execute")
 }
 /// Piston 镜像（显式 :latest tag，避免某些 docker 版本默认解析异常）
 pub const PISTON_IMAGE: &str = "ghcr.io/engineer-man/piston:latest";
 
-/// HTTP 客户端构造：本地 endpoint 不走系统代理（避免企业 PAC / VPN 把 127.0.0.1 也代理出去）
-fn build_http_client() -> Result<reqwest::Client, String> {
-    reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(600)) // ppman install 装 rust 可能 5+ 分钟
-        .no_proxy()
+/// HTTP 客户端构造（与 `training::piston_execute` 同款逻辑）：
+/// 本地 / 私网 endpoint → `.no_proxy()`（避免企业 PAC / VPN 把 127.0.0.1 也代理出去 → 502 / 连接拒绝）
+/// 公网 endpoint → 用系统默认（可能要走代理才能到外网）
+fn build_http_client(endpoint: &str, timeout: std::time::Duration) -> Result<reqwest::Client, String> {
+    let is_local = crate::training::endpoint_is_localhost_or_private(endpoint);
+    let mut builder = reqwest::Client::builder().timeout(timeout);
+    if is_local {
+        builder = builder.no_proxy();
+    }
+    builder
         .build()
         .map_err(|e| format!("构造 HTTP client 失败: {e}"))
+}
+
+/// 把 reqwest::Error 转成给用户看的可读 stderr（带分类提示 + 完整 source 链）。
+///
+/// reqwest 默认 Display 在某些 Windows 错误下不展开 source 链，导致用户看不到底层
+/// OS 错误码（如 WSAEACCES 10013 / WSAECONNREFUSED 10061）。这里手动遍历 source 链
+/// 把所有错误都打印出来，定位问题就能精确到"防火墙拦截"还是"端口未监听"。
+fn explain_reqwest_error(url: &str, e: &reqwest::Error) -> String {
+    use std::error::Error;
+    // 收集完整错误链（reqwest → hyper → io → os）
+    let mut chain: Vec<String> = vec![e.to_string()];
+    let mut current: Option<&dyn Error> = e.source();
+    while let Some(c) = current {
+        chain.push(c.to_string());
+        current = c.source();
+    }
+    let chain_str = chain.join("\n  → ");
+
+    // 根据错误链里的关键字给出针对性提示
+    let lower = chain_str.to_lowercase();
+    let mut hint = String::new();
+
+    if lower.contains("os error 10013") || lower.contains("forbidden by its access permissions") {
+        hint.push_str("\n（Windows OS 10013 / WSAEACCES）—— 出站连接被系统拒绝。最常见：\n");
+        hint.push_str("  · Windows Defender / 第三方杀毒软件拦截了应用对 127.0.0.1:2000 的连接\n");
+        hint.push_str("  · 公司 EDR / 端点保护策略\n");
+        hint.push_str("  · 把本应用加入防火墙/杀软白名单后重试。");
+    } else if lower.contains("os error 10061") || lower.contains("connection refused") {
+        hint.push_str("\n（连接被拒绝）—— 端口上没有进程在监听。容器可能挂了，请到「设置 → 代码运行」检查容器状态或重建容器。");
+    } else if lower.contains("os error 10060") || lower.contains("did not properly respond") || lower.contains("connect timed out") {
+        hint.push_str("\n（连接超时）—— TCP 握手没完成。容器可能在启动中，等 30s 重试。");
+    } else if lower.contains("os error 10054") || lower.contains("connection reset") {
+        hint.push_str("\n（连接被重置）—— Piston 服务在握手后立即关闭连接。容器可能正在崩溃，看「容器日志」排查。");
+    } else if lower.contains("dns") || lower.contains("name or service") || lower.contains("name resolution") {
+        hint.push_str("\n（DNS 解析失败）—— 改 endpoint 用 IP 字面量（http://127.0.0.1:2000/api/v2/execute）绕过。");
+    } else if lower.contains("proxy") {
+        hint.push_str("\n（代理介入）—— 系统代理仍在拦截。请关闭 V2Ray / Clash 之类的全局代理；或在代理设置里把 127.0.0.1 加入直连列表。");
+    } else if e.is_connect() {
+        hint.push_str("\n（连接级错误）常见原因：\n  · Piston 容器没在跑 → 「设置 → 代码运行」点「启动容器」\n  · 端口 2000 没映射 → 用「强制重建容器」修复");
+    } else if e.is_timeout() {
+        hint.push_str("\n（超时）—— 装包流程被中断；通常是网络慢或镜像源不稳定，可重试。");
+    } else if e.is_request() {
+        hint.push_str("\n（请求阶段错误）请把上面的【完整错误链】复制反馈，里面有具体 OS 错误码可以精确诊断。");
+    }
+
+    format!("调用 {url} 失败：\n  {chain_str}{hint}")
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// 裸 TCP HTTP/1.1 客户端 —— 给本地 endpoint 做绝对干净的兜底
+// ════════════════════════════════════════════════════════════════════════════
+//
+// 为什么要这层？reqwest 在 Windows 下针对 localhost 仍可能受多种因素干扰：
+//   · Hyper 对 IPv6 happy-eyeballs 的实现差异
+//   · 系统代理（注册表 / WPAD / PAC）以非常规方式被注入
+//   · 杀毒软件 / EDR 在 reqwest 进程上下文里 hook socket
+//   · TLS 探测库（rustls）在某些 Windows 配置下 trust store 异常
+//
+// 用 stdlib `TcpStream` 直接拼 HTTP/1.1 文本协议绕过以上**全部**外部因素 ——
+// 只要 piston 容器端口可达，这条路径**一定**能走通（curl 能连上 = 这里也能连上）。
+//
+// 仅用于 piston localhost 路径的 JSON GET/POST，**不支持** chunked / TLS / 重定向。
+
+/// 解析 `http://host:port/path?query` → (host, port, path_with_query)。
+fn parse_http_url(url: &str) -> Result<(String, u16, String), String> {
+    let after = url.strip_prefix("http://")
+        .ok_or_else(|| format!("local_http 仅支持 http:// (got: {url})"))?;
+    // host[:port]/path... → 切第一个 /
+    let (authority, path) = match after.find('/') {
+        Some(i) => (&after[..i], &after[i..]),
+        None => (after, "/"),
+    };
+    // host:port
+    let (host, port) = match authority.rsplit_once(':') {
+        Some((h, p)) => (
+            h.to_string(),
+            p.parse::<u16>().map_err(|_| format!("URL 端口非法：{p}"))?,
+        ),
+        None => (authority.to_string(), 80),
+    };
+    Ok((host, port, path.to_string()))
+}
+
+/// 用裸 TCP socket 发一次 HTTP/1.1 请求，返回 (status_code, body_string)。
+///
+/// 行为：
+///   · 用 `to_socket_addrs()` 解析 host —— 如果 host 是 IP 字面量（127.0.0.1）就直接得 IPv4，
+///     不走系统 DNS / hosts，彻底排除 IPv6 解析问题
+///   · 不 follow redirect（304/302 直接当作错误返回 status）
+///   · 只读 Content-Length 长度的 body（不支持 chunked —— Piston 不用 chunked）
+///   · 超时分两段：connect 5s，total（含读响应）= 调用方传入
+pub fn raw_http_request(
+    method: &str,
+    url: &str,
+    body: Option<&[u8]>,
+    timeout: std::time::Duration,
+) -> Result<(u16, String), String> {
+    use std::io::{Read, Write};
+    use std::net::{TcpStream, ToSocketAddrs};
+
+    let (host, port, path) = parse_http_url(url)?;
+    let target = format!("{host}:{port}");
+    // ToSocketAddrs 会把 "127.0.0.1:2000" 解析成 SocketAddrV4，IP 字面量根本不走 DNS
+    let addrs: Vec<_> = target
+        .to_socket_addrs()
+        .map_err(|e| format!("解析 {target} 失败: {e}"))?
+        .collect();
+    if addrs.is_empty() {
+        return Err(format!("{target} 没有可达地址"));
+    }
+
+    // 优先 IPv4（绕过 Windows IPv6 优先 + Docker Desktop 只监听 v4 的问题）
+    let mut sorted = addrs.clone();
+    sorted.sort_by_key(|a| if a.is_ipv4() { 0 } else { 1 });
+
+    let mut stream: Option<TcpStream> = None;
+    let mut last_err = String::new();
+    let connect_timeout = std::time::Duration::from_secs(5);
+    for addr in &sorted {
+        match TcpStream::connect_timeout(addr, connect_timeout) {
+            Ok(s) => { stream = Some(s); break; }
+            Err(e) => { last_err = format!("connect {addr}: {e} (raw os error: {:?})", e.raw_os_error()); }
+        }
+    }
+    let mut stream = stream.ok_or_else(|| format!("无法连接 {target} (尝试了 {} 个地址)：{last_err}", sorted.len()))?;
+    stream.set_read_timeout(Some(timeout)).ok();
+    stream.set_write_timeout(Some(timeout)).ok();
+
+    // 拼请求
+    let body_bytes = body.unwrap_or(&[]);
+    let mut req = format!(
+        "{method} {path} HTTP/1.1\r\nHost: {host}:{port}\r\nUser-Agent: doc-reader-piston/1.0\r\nAccept: application/json\r\nConnection: close\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n",
+        body_bytes.len()
+    ).into_bytes();
+    req.extend_from_slice(body_bytes);
+    stream.write_all(&req).map_err(|e| format!("写请求失败: {e} (raw os error: {:?})", e.raw_os_error()))?;
+    stream.flush().ok();
+
+    // 读响应：Connection: close 让对端写完就关，read_to_end 即可
+    let mut buf = Vec::with_capacity(8192);
+    stream.read_to_end(&mut buf).map_err(|e| format!("读响应失败: {e} (raw os error: {:?})", e.raw_os_error()))?;
+
+    // 解析 HTTP/1.1 头：找第一个 \r\n\r\n
+    let split = buf.windows(4).position(|w| w == b"\r\n\r\n")
+        .ok_or_else(|| "响应格式异常：找不到 \\r\\n\\r\\n 分隔".to_string())?;
+    let head = &buf[..split];
+    let body_part = &buf[split + 4..];
+
+    let head_str = std::str::from_utf8(head).map_err(|_| "响应头非 UTF-8".to_string())?;
+    // 第一行：HTTP/1.1 <code> <reason>
+    let first_line = head_str.lines().next().ok_or_else(|| "响应空".to_string())?;
+    let mut parts = first_line.split_whitespace();
+    let _proto = parts.next();
+    let code_s = parts.next().ok_or_else(|| format!("响应首行格式异常：{first_line}"))?;
+    let code: u16 = code_s.parse().map_err(|_| format!("无法解析 status: {code_s}"))?;
+
+    let body_str = String::from_utf8_lossy(body_part).into_owned();
+    Ok((code, body_str))
+}
+
+/// 用裸 TCP 发请求并返回 CmdResult，给 install_runtime 的 fallback 用。
+fn raw_http_to_cmdresult(method: &str, url: &str, body: Option<&[u8]>) -> CmdResult {
+    match raw_http_request(method, url, body, std::time::Duration::from_secs(600)) {
+        Ok((code, text)) => {
+            if (200..300).contains(&code) {
+                CmdResult { success: true, exit_code: Some(0), stdout: text, stderr: String::new() }
+            } else {
+                let pretty = match serde_json::from_str::<Value>(&text) {
+                    Ok(v) => v.get("message").and_then(|m| m.as_str()).map(String::from).unwrap_or_else(|| text.clone()),
+                    Err(_) => text.clone(),
+                };
+                CmdResult {
+                    success: false,
+                    exit_code: Some(code as i32),
+                    stdout: text,
+                    stderr: format!("[raw_tcp] HTTP {code}: {pretty}"),
+                }
+            }
+        }
+        Err(e) => CmdResult {
+            success: false,
+            exit_code: None,
+            stdout: String::new(),
+            stderr: format!("[raw_tcp fallback 也失败] {e}"),
+        },
+    }
 }
 
 /// 把默认 endpoint（`/api/v2/execute`）转成 packages / runtimes 端点。
 /// 前端不让用户配 packages/runtimes 路径，统一从 execute endpoint 推导。
 fn packages_endpoint(execute_endpoint: &str) -> String {
-    // 标准用法："http://localhost:2000/api/v2/execute" → "http://localhost:2000/api/v2/packages"
+    // 标准用法："http://127.0.0.1:2000/api/v2/execute" → "http://127.0.0.1:2000/api/v2/packages"
     if let Some(idx) = execute_endpoint.rfind("/execute") {
         return format!("{}/packages", &execute_endpoint[..idx]);
     }
     // 兜底：直接拼到默认地址
-    format!("http://localhost:{PISTON_HOST_PORT}/api/v2/packages")
+    format!("http://127.0.0.1:{PISTON_HOST_PORT}/api/v2/packages")
 }
 fn runtimes_endpoint(execute_endpoint: &str) -> String {
     if let Some(idx) = execute_endpoint.rfind("/execute") {
         return format!("{}/runtimes", &execute_endpoint[..idx]);
     }
-    format!("http://localhost:{PISTON_HOST_PORT}/api/v2/runtimes")
+    format!("http://127.0.0.1:{PISTON_HOST_PORT}/api/v2/runtimes")
 }
 
 /// 子进程执行结果（统一格式）
@@ -400,24 +597,62 @@ pub fn container_ports() -> CmdResult {
     )
 }
 
+/// 把"用户友好的语言名"映射成 Piston **包名**（用于 install / 查询）。
+///
+/// 关键不一致点（来自 GET /api/v2/packages 的实际包列表）：
+///   - C / C++ 共用同一个包 `gcc`
+///   - JavaScript 包名是 `node`
+///   - C# 包名是 `mono`（也有 `dotnet` 但场景不同，这里用 `mono` 作默认）
+///   - V 语言包名是 `vlang`（不是 `v`）
+///   - R 语言包名是 `rscript`
+///   - PowerShell 包名是 `pwsh`
+///   - Common Lisp 包名是 `lisp`
+///
+/// **注意**：execute 端点（运行代码时）用 runtime 的 language / aliases 匹配，
+/// 那里 `c` / `cpp` / `javascript` / `c++` 等都是合法的 alias。
+/// 这里的映射**只用在 install / list 路径**。
+fn normalize_install_language(user_lang: &str) -> &str {
+    match user_lang.to_lowercase().as_str() {
+        // 共用包
+        "c" | "c++" | "cpp" | "gcc" => "gcc",
+        // 名字不一致
+        "js" | "javascript" | "node" | "nodejs" => "node",
+        "ts" => "typescript",
+        "c#" | "csharp" | "mono" => "mono",
+        "v" | "vlang" => "vlang",
+        "r" | "rscript" => "rscript",
+        "powershell" | "pwsh" | "ps" | "ps1" => "pwsh",
+        "common-lisp" | "commonlisp" | "lisp" => "lisp",
+        // 直传（已与 Piston 包名一致：python / java / go / rust / kotlin / swift /
+        // ruby / php / scala / haskell / lua / perl / dart / elixir / erlang /
+        // julia / nim / zig / crystal / clojure / ocaml / racket / pascal / bash /
+        // dotnet / cobol / dragon / forth / groovy 等）
+        _ => user_lang,
+    }
+}
+
 /// 安装一个 runtime（语言）。version 默认 "*" 装最新。
 ///
 /// 走 Piston HTTP API（POST /api/v2/packages，body `{language, version}`）。
 /// Piston 3.1.1 起已废弃容器内 cli（`/piston/cli/index.js` 不再存在），
 /// 必须通过 HTTP 调；语义跟旧 `ppman install <lang>=<ver>` 等价。
+///
+/// 注意 `language` 会先经 `normalize_install_language` 映射成 Piston 实际包名
+/// （c / c++ → gcc, javascript → node, csharp → mono）。
 pub async fn install_runtime(
     execute_endpoint: &str,
     language: &str,
     version: Option<&str>,
 ) -> CmdResult {
+    let pkg_name = normalize_install_language(language);
     let target_version = match version {
         Some(v) if !v.is_empty() && v != "*" => v.to_string(),
         _ => "*".to_string(),
     };
     let url = packages_endpoint(execute_endpoint);
-    let body = json!({ "language": language, "version": target_version });
+    let body = json!({ "language": pkg_name, "version": target_version });
 
-    let client = match build_http_client() {
+    let client = match build_http_client(execute_endpoint, std::time::Duration::from_secs(600)) {
         Ok(c) => c,
         Err(e) => {
             return CmdResult {
@@ -432,13 +667,40 @@ pub async fn install_runtime(
     let resp = match client.post(&url).json(&body).send().await {
         Ok(r) => r,
         Err(e) => {
+            let detailed = explain_reqwest_error(&url, &e);
+            // 本地 endpoint：reqwest 失败时用裸 TCP 兜底（绕过 hyper / DNS / proxy 的所有干扰）
+            if crate::training::endpoint_is_localhost_or_private(execute_endpoint) {
+                log::warn!("[install_runtime] reqwest 失败，尝试裸 TCP 兜底\n{detailed}");
+                let body_bytes = serde_json::to_vec(&body).unwrap_or_default();
+                let raw_url = url.clone();
+                let r = tokio::task::spawn_blocking(move || {
+                    raw_http_to_cmdresult("POST", &raw_url, Some(&body_bytes))
+                })
+                .await
+                .unwrap_or_else(|e| CmdResult {
+                    success: false,
+                    exit_code: None,
+                    stdout: String::new(),
+                    stderr: format!("raw_tcp spawn 失败: {e}"),
+                });
+                // 兜底成功 → 直接用结果；失败 → 把 reqwest 错和 raw_tcp 错合在一起报给用户
+                if r.success {
+                    log::info!("[install_runtime] 裸 TCP 兜底成功");
+                    return r;
+                } else {
+                    return CmdResult {
+                        success: false,
+                        exit_code: r.exit_code,
+                        stdout: r.stdout,
+                        stderr: format!("{detailed}\n\n--- 裸 TCP 兜底也失败 ---\n{}", r.stderr),
+                    };
+                }
+            }
             return CmdResult {
                 success: false,
                 exit_code: None,
                 stdout: String::new(),
-                stderr: format!(
-                    "调用 {url} 失败：{e}\n常见原因：\n  · Piston 容器没有运行\n  · 端口 2000 没被映射出来\n  · endpoint 配置错误"
-                ),
+                stderr: detailed,
             };
         }
     };
@@ -477,22 +739,41 @@ pub async fn install_runtime(
 /// 返回 `[{ language, version }]`。
 pub async fn list_runtimes(execute_endpoint: &str) -> Result<Value, String> {
     let url = runtimes_endpoint(execute_endpoint);
-    let client = build_http_client()?;
-    let resp = client
-        .get(&url)
-        .send()
-        .await
-        .map_err(|e| format!("调用 {url} 失败：{e}"))?;
-    if !resp.status().is_success() {
-        let status = resp.status();
-        let text = resp.text().await.unwrap_or_default();
-        return Err(format!("HTTP {}: {}", status.as_u16(), text));
-    }
-    // Piston 返回：[{language, version, aliases, runtime}]
-    let arr: Vec<Value> = resp
-        .json()
-        .await
-        .map_err(|e| format!("解析 /runtimes 响应失败：{e}"))?;
+    // list 比较快，给 30s 已足够（Piston 只是从内存返回）
+    let client = build_http_client(execute_endpoint, std::time::Duration::from_secs(30))?;
+
+    // 先用 reqwest；如果失败且是本地 endpoint，就裸 TCP 兜底
+    let resp_result = client.get(&url).send().await;
+    let arr: Vec<Value> = match resp_result {
+        Ok(resp) => {
+            if !resp.status().is_success() {
+                let status = resp.status();
+                let text = resp.text().await.unwrap_or_default();
+                return Err(format!("HTTP {}: {}", status.as_u16(), text));
+            }
+            resp.json().await.map_err(|e| format!("解析 /runtimes 响应失败：{e}"))?
+        }
+        Err(e) => {
+            let detailed = explain_reqwest_error(&url, &e);
+            if !crate::training::endpoint_is_localhost_or_private(execute_endpoint) {
+                return Err(detailed);
+            }
+            log::warn!("[list_runtimes] reqwest 失败，尝试裸 TCP 兜底\n{detailed}");
+            // 裸 TCP fallback
+            let raw_url = url.clone();
+            let r = tokio::task::spawn_blocking(move || {
+                raw_http_request("GET", &raw_url, None, std::time::Duration::from_secs(30))
+            })
+            .await
+            .map_err(|e| format!("raw_tcp spawn 失败: {e}"))?;
+            let (code, text) = r.map_err(|e| format!("{detailed}\n\n--- 裸 TCP 兜底也失败 ---\n{e}"))?;
+            if !(200..300).contains(&code) {
+                return Err(format!("[raw_tcp] HTTP {code}: {text}"));
+            }
+            log::info!("[list_runtimes] 裸 TCP 兜底成功");
+            serde_json::from_str(&text).map_err(|e| format!("解析裸 TCP 响应失败: {e}\nbody: {text}"))?
+        }
+    };
     // 标准化成前端期望的 {language, version}
     let items: Vec<Value> = arr
         .into_iter()

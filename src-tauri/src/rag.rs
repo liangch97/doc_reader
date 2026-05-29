@@ -243,7 +243,19 @@ pub async fn index_session(
         if clear_existing {
             db::rag_clear_session(&conn, session_id)?;
         }
-        // 拉所有页面文本
+        // 该 session 在 doc_pages 里到底有没有页（无论内容是否为空）。
+        // 用于区分两种"无内容"：
+        //   · total_pages == 0 → 本就没有分页内容（EPUB/MOBI 等流式资料），合法不建 RAG
+        //   · total_pages > 0 但全空 → PDF 文本抽取失败（xref 损坏/扫描件），应判为 failed
+        let total_pages: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM doc_pages WHERE session_id = ?1",
+                rusqlite::params![session_id],
+                |r| r.get(0),
+            )
+            .map_err(|e| format!("统计 doc_pages 失败: {e}"))?;
+
+        // 拉所有非空页面文本
         let mut stmt = conn
             .prepare(
                 "SELECT page_index, content FROM doc_pages
@@ -261,7 +273,25 @@ pub async fn index_session(
             .map_err(|e| format!("收集 doc_pages 失败: {e}"))?;
 
         if pages.is_empty() {
-            // 没有可索引的内容（EPUB 等流式资料目前不支持 RAG）
+            if total_pages > 0 {
+                // 有页但全空 → 抽取失败，显式判 failed 并给出可读原因，
+                // 避免下游 wizard/知识点检测只报"rag_chunks 为空"让用户摸不着头脑。
+                let err = format!(
+                    "文档有 {total_pages} 页但文本全部为空：可能是扫描件/图片型 PDF，或 PDF 交叉引用表(xref)损坏导致解析失败，无法构建知识库。"
+                );
+                log::warn!("RAG[{}]: {}", session_id, err);
+                db::rag_upsert_meta(
+                    &conn,
+                    session_id,
+                    "failed",
+                    0,
+                    llm.embedding_model_name(),
+                    0,
+                    &err,
+                )?;
+                return Err(err);
+            }
+            // total_pages == 0：没有可索引的内容（EPUB 等流式资料目前不支持 RAG）
             db::rag_upsert_meta(&conn, session_id, "ready", 0, llm.embedding_model_name(), 0, "")?;
             return Ok(0);
         }

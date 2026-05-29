@@ -40,6 +40,7 @@ import {
   X,
 } from 'lucide-react'
 import { invoke } from '@/lib/tauri'
+import type { RagSource } from '@/lib/tauri'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { MarkdownView, type MdTheme } from '@/components/markdown/MarkdownView'
 import { MarkdownEditor } from '@/components/markdown/MarkdownEditor'
@@ -96,6 +97,13 @@ interface UnitState {
   teach_pack: TeachPack | null
   status: 'pending' | 'teaching' | 'probing' | 'grading' | 'done'
   retries: number
+  /**
+   * v10 (2026-05) 学习流断点续传：流式被网络中断 / app 崩溃打断时，
+   * 后端把已生成的 raw markdown 落盘到这一字段，前端识别后展示「继续生成」按钮，
+   * 调用 agent_teach_unit_stream(resume=true) 让模型从断点接着写。
+   * 流自然完成时该字段被清空。
+   */
+  partial_explanation?: string
 }
 
 interface AgentTabProps {
@@ -127,6 +135,8 @@ interface FollowupItem {
   streaming: boolean
   reasoning?: boolean        // 思考中…
   error?: string
+  /** RAG 检索来源（命令返回时带上；点击可跳页） */
+  sources?: RagSource[]
   /** screenKey = `${unitIdx}-${localIdx}`，让同一 unit 不同屏的追问可隔离展示 */
   screenKey: string
 }
@@ -343,7 +353,7 @@ function normalizePlan(p: AgentPlan | null | undefined): AgentPlan | null {
   }
 }
 
-export function AgentTab({ sessionId, isActive = true }: AgentTabProps) {
+export function AgentTab({ sessionId, isActive = true, onJumpPage }: AgentTabProps) {
   const [plan, setPlan] = useState<AgentPlan | null>(null)
   const [unitStatesMap, setUnitStatesMap] = useState<Record<number, UnitState>>({})
 
@@ -376,8 +386,49 @@ export function AgentTab({ sessionId, isActive = true }: AgentTabProps) {
   //     它会让"已有 active plan 但 sessionStorage 被清"也强制弹 wizard。
   //   - 真正的判断条件是「**后端是否已经有 active plan + 有效 outline**」。
   //   - 加 `loaded` 状态避免首屏 plan 还在 loading 时被误判为 planInvalid。
-  const [wizardOpen, setWizardOpen] = useState(false)
-  const [wizardForce, setWizardForce] = useState(false)
+  //
+  // v9 (2026-05) 用户反馈："切到其他标签页再回来，wizard 又关闭了"：
+  //   - wizardOpen / wizardForce 持久化到 sessionStorage（按 sessionId 隔离）
+  //   - 这是为了 plan 仍有效但用户已点「重新生成」的场景：
+  //       用户点 → wizardOpen=true + wizardForce=true → 切走 → unmount 丢 state
+  //       → 切回来 plan 还在，Auto-Pilot 不会自动重开 wizard
+  //       → 没持久化的话用户的「重新生成」意图被吞掉，看到的是旧学习屏
+  //   - 提交 / 取消 / 自动关闭时已有 set(false) 调用，配合 effect 自动清 storage
+  //   - sessionStorage 在窗口关闭时清，符合"软件没关就不丢"的语义
+  const [wizardOpen, setWizardOpen] = useState<boolean>(() => {
+    try {
+      return sessionStorage.getItem(`agent:wizardOpen:${sessionId}`) === '1'
+    } catch {
+      return false
+    }
+  })
+  const [wizardForce, setWizardForce] = useState<boolean>(() => {
+    try {
+      return sessionStorage.getItem(`agent:wizardForce:${sessionId}`) === '1'
+    } catch {
+      return false
+    }
+  })
+
+  // wizardOpen / wizardForce → sessionStorage 同步
+  useEffect(() => {
+    try {
+      const k = `agent:wizardOpen:${sessionId}`
+      if (wizardOpen) sessionStorage.setItem(k, '1')
+      else sessionStorage.removeItem(k)
+    } catch {
+      /* ignore quota / privacy mode */
+    }
+  }, [wizardOpen, sessionId])
+  useEffect(() => {
+    try {
+      const k = `agent:wizardForce:${sessionId}`
+      if (wizardForce) sessionStorage.setItem(k, '1')
+      else sessionStorage.removeItem(k)
+    } catch {
+      /* ignore quota / privacy mode */
+    }
+  }, [wizardForce, sessionId])
   const [loaded, setLoaded] = useState(false)
   // v6 (2026-05) #3++ 修复（用户反馈："完成态面板妨碍重温讲解"）：
   //   phase==='done' 时不再 early return DoneReport 全屏挡住讲解；
@@ -472,6 +523,20 @@ export function AgentTab({ sessionId, isActive = true }: AgentTabProps) {
     let cancelled = false
 
     void (async () => {
+      // v10 (2026-05) 断点续传：start 事件可能带 resumed=true + partial 字段，
+      // 表示这次 teach_stream 是从已有断点续写。把 streamingText 初始化为 partial，
+      // 后续 token 自动拼到尾部，UI 看到的内容连贯。
+      const startU = await listen<{
+        turn_id: string
+        unit_index: number
+        resumed?: boolean
+        partial?: string
+      }>('agent-teach-start', (ev) => {
+        if (ev.payload.resumed && typeof ev.payload.partial === 'string' && ev.payload.partial.length > 0) {
+          setStreamingTurnId(ev.payload.turn_id)
+          setStreamingText(ev.payload.partial)
+        }
+      })
       const tokenU = await listen<{ turn_id: string; delta: string }>(
         'agent-teach-token',
         (ev) => {
@@ -497,16 +562,29 @@ export function AgentTab({ sessionId, isActive = true }: AgentTabProps) {
         // 后端在 emit done 之前已持久化 teach_pack，这里 refresh 拿到最终态
         void refresh()
       })
-      const errorU = await listen<{ turn_id: string; error: string }>(
+      const errorU = await listen<{
+        turn_id: string
+        error: string
+        unit_index?: number
+        has_partial?: boolean
+        partial_len?: number
+      }>(
         'agent-teach-error',
         (ev) => {
           setStreamingTurnId(null)
           setReasoning(false)
           setStreamingText('')
-          setError(ev.payload.error)
-          // 释放当前单元的 ref，让用户可以 retry
+          // v10 (2026-05) 断点续传：错误信息里如果带 has_partial，UI 提示用户可以续传
+          const baseMsg = ev.payload.error
+          const friendly = ev.payload.has_partial
+            ? `${baseMsg}\n\n已为你保留断点（约 ${ev.payload.partial_len ?? 0} 字），可点击「继续生成」从断点续写。`
+            : baseMsg
+          setError(friendly)
+          // 释放当前单元的 ref，让用户可以 retry / resume
           const cu = planRef.current?.current_unit
           if (typeof cu === 'number') teachStartedRef.current.delete(cu)
+          // 拿到最新 partial_explanation（让「继续生成」按钮立刻可见）
+          void refresh()
         },
       )
       // ── 追问相关事件 ──────────────────────────────────────────────
@@ -562,7 +640,7 @@ export function AgentTab({ sessionId, isActive = true }: AgentTabProps) {
           }))
         },
       )
-      const fpDoneU = await listen<{ turn_id: string; unit_index: number; full: string }>(
+      const fpDoneU = await listen<{ turn_id: string; unit_index: number; full: string; sources?: RagSource[] }>(
         'agent-followup-done',
         (ev) => {
           patchFollowup(ev.payload.unit_index, ev.payload.turn_id, (it) => ({
@@ -571,6 +649,7 @@ export function AgentTab({ sessionId, isActive = true }: AgentTabProps) {
             answer: ev.payload.full,
             streaming: false,
             reasoning: false,
+            sources: ev.payload.sources ?? it.sources,
           }))
         },
       )
@@ -677,13 +756,13 @@ export function AgentTab({ sessionId, isActive = true }: AgentTabProps) {
       })
 
       if (cancelled) {
-        tokenU(); reasoningU(); doneU(); errorU()
+        startU(); tokenU(); reasoningU(); doneU(); errorU()
         fpSuggU(); fpTokU(); fpReasonU(); fpDoneU(); fpErrU()
         prefDoneU(); prefErrU(); cachedU()
         explUpdU(); tpReadyU(); archiveChangedU()
       } else {
         unlistens.push(
-          tokenU, reasoningU, doneU, errorU,
+          startU, tokenU, reasoningU, doneU, errorU,
           fpSuggU, fpTokU, fpReasonU, fpDoneU, fpErrU,
           prefDoneU, prefErrU, cachedU,
           explUpdU, tpReadyU, archiveChangedU,
@@ -794,10 +873,19 @@ export function AgentTab({ sessionId, isActive = true }: AgentTabProps) {
     // (2) 路线图已就绪 + phase=idle + 当前单元尚未启动流 → 触发流式教学
     //     如果当前单元已被 prefetch（teach_pack 非空），后端会立即短路返回 status=cached
     //     并把 phase 推到 probing/reviewing，前端 refresh 后 quiz 屏自动显示。
+    //
+    // v10 (2026-05) 断点续传：当前单元如果存在 partial_explanation（上次因网络中断
+    //   留下的断点），**不**自动重新拉流 —— 那会让模型从头再来一遍，丢失已生成内容。
+    //   交给用户主动点「继续生成」按钮（调 startTeachStream(resume=true)）。
+    const hasPartialPending =
+      !!currentUnitState?.partial_explanation &&
+      currentUnitState.partial_explanation.trim().length > 0 &&
+      !currentUnitState?.teach_pack?.explanation
     if (
       plan &&
       phase === 'idle' &&
       currentUnit &&
+      !hasPartialPending &&
       !teachStartedRef.current.has(currentUnitIndex)
     ) {
       teachStartedRef.current.add(currentUnitIndex)
@@ -825,7 +913,7 @@ export function AgentTab({ sessionId, isActive = true }: AgentTabProps) {
         }
       })()
     }
-  }, [loaded, paused, busy, streamingTurnId, plan, phase, currentUnit, currentUnitIndex, refresh, sessionId, wizardOpen])
+  }, [loaded, paused, busy, streamingTurnId, plan, phase, currentUnit, currentUnitIndex, currentUnitState?.partial_explanation, currentUnitState?.teach_pack?.explanation, refresh, sessionId, wizardOpen])
 
   // ── Prefetch 调度：后台串行生成 currentUnit 之后的单元 ──────────────
   //   - 串行（同一时刻只跑一个），避免 LLM 限速 / 过载
@@ -884,6 +972,44 @@ export function AgentTab({ sessionId, isActive = true }: AgentTabProps) {
       }
     },
     [sessionId, currentUnitIndex, refresh],
+  )
+
+  // ── 断点续传：从已有 partial 接着流式生成（v10 2026-05） ─────────────
+  // 触发时机：
+  //   1. 用户点击错误条 / 中断提示中的「继续生成」按钮
+  //   2. 进入面板时检测到当前单元有 partial_explanation 但无 teach_pack（页面刷新后的恢复路径）
+  //
+  // 与「重试」的区别：retry 会清空 partial 重头生成；resume 把 partial 作为续写起点。
+  const resumeTeach = useCallback(
+    async (unitIdx: number) => {
+      setError('')
+      teachStartedRef.current.add(unitIdx)
+      try {
+        const r = await invoke<{
+          turn_id?: string
+          status?: string
+          resumed?: boolean
+        }>('agent_teach_unit_stream', {
+          sessionId,
+          unitIndex: unitIdx,
+          resume: true,
+        })
+        if (r.status === 'cached') {
+          await refresh()
+          return
+        }
+        // streamingText 由 agent-teach-start 事件统一注入 partial（resumed=true 时）
+        if (r.turn_id && !r.resumed) {
+          // 后端没识别到 partial（DB 已被清空或别的并发原因）→ 当作普通新流
+          setStreamingTurnId(r.turn_id)
+          setStreamingText('')
+        }
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e))
+        teachStartedRef.current.delete(unitIdx)
+      }
+    },
+    [sessionId, refresh],
   )
 
   // v4 (2026-05): submit / agent_submit_answers 已移除（题目搬到训练板块）
@@ -1001,7 +1127,7 @@ export function AgentTab({ sessionId, isActive = true }: AgentTabProps) {
         .map((it) => [it.question, it.answer])
 
       try {
-        const r = await invoke<{ turn_id: string; unit_index: number }>('agent_followup_stream', {
+        const r = await invoke<{ turn_id: string; unit_index: number; sources?: RagSource[] }>('agent_followup_stream', {
           sessionId,
           unitIndex,
           question: q,
@@ -1010,7 +1136,7 @@ export function AgentTab({ sessionId, isActive = true }: AgentTabProps) {
         setFollowupItems((m) => ({
           ...m,
           [unitIndex]: (m[unitIndex] ?? []).map((it) =>
-            it.id === id ? { ...it, turn_id: r.turn_id } : it,
+            it.id === id ? { ...it, turn_id: r.turn_id, sources: r.sources ?? it.sources } : it,
           ),
         }))
       } catch (e) {
@@ -1080,13 +1206,24 @@ export function AgentTab({ sessionId, isActive = true }: AgentTabProps) {
 
   const screens: Screen[] = useMemo(() => {
     const arr: Screen[] = []
-    for (let i = 0; i <= currentUnitIndex; i++) {
+    // v11 (2026-05) 修复"前端只能看到一个单元"：原版上限 i <= currentUnitIndex 把
+    //   已 prefetched 的未来单元从 screens 排除，导致 PagerBar/RoadmapNav 都翻/跳不过去。
+    //   改为遍历全部 units —— md 为空（未来单元尚未 prefetch 完成）时下方 if(md) 自动跳过，
+    //   不会插入空屏；prefetched 完成的单元则正常加入，让翻页/路线图导航真正可用。
+    for (let i = 0; i < units.length; i++) {
       const u = units[i]
       if (!u) continue
       const us = unitStatesMap[i]
       const persisted = us?.teach_pack?.explanation ?? ''
       const isStreamingThis = i === currentUnitIndex && !!streamingTurnId
-      const md = isStreamingThis ? streamingText : persisted
+      // v10 (2026-05) 断点续传：当前单元正在 streaming 用 streamingText；
+      // 否则优先 persisted（teach_pack 完整）；都没有时回退到 partial_explanation
+      // —— 让用户在网络中断后仍能看见已生成的部分内容（只读，等待「继续生成」）
+      // 未来单元（i > currentUnitIndex）只有 persisted 才会有内容，partial 不参与。
+      const partial = i === currentUnitIndex ? (us?.partial_explanation ?? '') : ''
+      const md = isStreamingThis
+        ? streamingText
+        : persisted || (partial.trim().length > 0 ? partial : '')
       let localIdx = 0
       if (md) {
         let sections = splitUnitMarkdown(md)
@@ -1212,6 +1349,53 @@ export function AgentTab({ sessionId, isActive = true }: AgentTabProps) {
     },
     [screens],
   )
+
+  // ── v11 (2026-05) 后台同步 backend current_unit ──────────────────────────
+  // screens 现在包含已 prefetched 的未来单元，用户可通过 PagerBar / RoadmapNav
+  // 翻 / 跳到 unitIdx > currentUnitIndex 的屏。但 backend 的 plan.current_unit
+  // 不会自动推进 —— 用户刷新 / 重启 app 后会回到旧位置，进度丢失。
+  //
+  // 解决：检测到当前屏的 unitIdx 超过 backend currentUnitIndex 时，串行调
+  // agent_advance('next') 把 backend 推到目标单元（一次最多推到 screen.unitIdx）。
+  // 用 syncingTargetRef 锁防止同一目标被重复触发；refresh 后 currentUnitIndex
+  // 增加，effect 重跑但 target 已对齐，不再 fire。
+  const syncingTargetRef = useRef<number | null>(null)
+  useEffect(() => {
+    const screen = screens[currentScreenIdx]
+    if (!screen) return
+    if (screen.unitIdx <= currentUnitIndex) return
+    if (syncingTargetRef.current !== null) return // 已有同步在飞，等它完成后 effect 会重跑
+    if (paused) return // 暂停态不偷推进
+    if (streamingTurnId) return // 正在流式生成时也不动 backend
+    // v11 (2026-05) 与断点续传兼容：当前单元若处于 partial-pending（中断态）
+    // 不偷推进 backend —— 否则 backend current_unit 越过该单元后，partial
+    // 状态会被孤立（前端 currentUnitState 指向新单元，「继续生成」按钮永不显示）。
+    // 用户仍能用 PagerBar 翻到未来单元*查看*内容，但需先 resume / retry 处理本单元。
+    const cuState = unitStatesMap[currentUnitIndex]
+    const cuHasPartial =
+      !!cuState?.partial_explanation &&
+      cuState.partial_explanation.trim().length > 0 &&
+      !cuState?.teach_pack?.explanation
+    if (cuHasPartial) return
+    const target = screen.unitIdx
+    syncingTargetRef.current = target
+    void (async () => {
+      try {
+        const steps = target - currentUnitIndex
+        for (let s = 0; s < steps; s++) {
+          await invoke('agent_advance', { sessionId, action: 'next' })
+        }
+        await refresh()
+      } catch (e) {
+        console.warn('[AgentTab] sync advance backend failed', e)
+      } finally {
+        // 即使失败也清锁，避免永久卡住；下次 currentScreenIdx 变化会重试
+        if (syncingTargetRef.current === target) {
+          syncingTargetRef.current = null
+        }
+      }
+    })()
+  }, [currentScreenIdx, screens, currentUnitIndex, unitStatesMap, paused, streamingTurnId, sessionId, refresh])
 
   // 键盘翻页：←/PageUp 前一屏，→/PageDown/空格 后一屏
   //
@@ -1455,22 +1639,70 @@ export function AgentTab({ sessionId, isActive = true }: AgentTabProps) {
             <div className="flex items-start gap-2 rounded border border-red-500/40 bg-red-500/10 p-3 text-sm text-red-500">
               <AlertCircle className="mt-0.5 size-4 shrink-0" />
               <div className="flex-1">
-                <div>{error}</div>
-                <button
-                  className="mt-2 rounded border border-red-500/40 px-2 py-1 text-xs hover:bg-red-500/20"
-                  onClick={() => {
-                    setError('')
-                    void advance('retry')
-                  }}
-                >
-                  重试本单元
-                </button>
+                <div className="whitespace-pre-line">{error}</div>
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  {/* v10 (2026-05) 断点续传：当前单元有 partial 时优先展示「继续生成」；
+                      retry 是兜底（清空 partial 重头再来） */}
+                  {currentUnitState?.partial_explanation &&
+                    currentUnitState.partial_explanation.trim().length > 0 &&
+                    !currentUnitState?.teach_pack?.explanation && (
+                      <button
+                        className="inline-flex items-center gap-1 rounded border border-emerald-500/50 bg-emerald-500/10 px-2 py-1 text-xs font-medium text-emerald-600 hover:bg-emerald-500/20 dark:text-emerald-400"
+                        onClick={() => {
+                          setError('')
+                          void resumeTeach(currentUnitIndex)
+                        }}
+                      >
+                        <Play className="size-3" />
+                        从断点继续生成
+                      </button>
+                    )}
+                  <button
+                    className="rounded border border-red-500/40 px-2 py-1 text-xs hover:bg-red-500/20"
+                    onClick={() => {
+                      setError('')
+                      void advance('retry')
+                    }}
+                  >
+                    重试本单元
+                  </button>
+                </div>
               </div>
               <button onClick={() => setError('')}>
                 <X className="size-4" />
               </button>
             </div>
           )}
+
+          {/* v10 (2026-05) 断点中断态横幅：error 已被清掉、但 DB 仍留 partial（如刷新后恢复）→
+              主动给一个「继续生成」CTA，避免用户卡住 */}
+          {!error &&
+            !streamingTurnId &&
+            !busy &&
+            currentUnitState?.partial_explanation &&
+            currentUnitState.partial_explanation.trim().length > 0 &&
+            !currentUnitState?.teach_pack?.explanation && (
+              <div className="flex items-start gap-2 rounded border border-emerald-500/40 bg-emerald-500/10 p-3 text-sm text-emerald-700 dark:text-emerald-400">
+                <Sparkles className="mt-0.5 size-4 shrink-0" />
+                <div className="flex-1">
+                  <div className="font-medium">检测到上次未写完的讲解</div>
+                  <div className="mt-0.5 text-xs opacity-80">
+                    上次因网络中断断开了，已保留约
+                    {' '}
+                    {currentUnitState.partial_explanation.length}
+                    {' '}
+                    字。点「继续生成」从断点接着写下去。
+                  </div>
+                  <button
+                    className="mt-2 inline-flex items-center gap-1 rounded border border-emerald-500/50 bg-emerald-500/15 px-2 py-1 text-xs font-medium hover:bg-emerald-500/25"
+                    onClick={() => void resumeTeach(currentUnitIndex)}
+                  >
+                    <Play className="size-3" />
+                    从断点继续生成
+                  </button>
+                </div>
+              </div>
+            )}
 
           {/* 暂停态 */}
           {paused && (
@@ -1576,6 +1808,7 @@ export function AgentTab({ sessionId, isActive = true }: AgentTabProps) {
                     void startFollowup(screen.unitIdx, fpKey, q)
                   }
                   mdTheme={mdTheme}
+                  onJumpPage={onJumpPage}
                 />
 
                 {/* v5 (2026-05) B2: 单元最后一屏底部 →「练习本单元」按钮（学习↔训练联动）*/}
@@ -1592,49 +1825,29 @@ export function AgentTab({ sessionId, isActive = true }: AgentTabProps) {
         </div>
       </div>
 
-      {/* v8 (2026-05) reviewing 阶段所有单元都显示「下一单元 / 完成学习」按钮：
-          原版只末单元显示，中间单元 0.8s 自动跳。现在取消自动跳，让用户主动确认。 */}
+      {/* v9 (2026-05) 用户反馈："蓝色置底标签占地方"：删除中间单元的「继续下一单元」CTA。
+          翻屏（PagerBar / 键盘 →）已能顺序看到 prefetch 就绪的下一单元内容；
+          想显式推进 plan.current_unit 仍可走顶部 Map 路线图按钮。
+          仅最后一单元保留绿色「前往训练面板」CTA —— 这是去训练板块的引导，性质不同。 */}
       {phase === 'reviewing' &&
         units.length > 0 &&
         teachPack &&
-        (() => {
-          const isLastUnit = currentUnitIndex >= units.length - 1
-          if (isLastUnit) {
-            return (
-              <div className="shrink-0 border-t border-border-1 bg-emerald-500/5 px-5 py-3">
-                <button
-                  type="button"
-                  onClick={() => void advance('next')}
-                  disabled={busy}
-                  className="flex w-full items-center justify-center gap-2 rounded-lg bg-emerald-500 py-2.5 text-sm font-medium text-white shadow-sm transition hover:bg-emerald-600 disabled:cursor-wait disabled:opacity-60"
-                >
-                  <Check className="size-4" />
-                  已学完最后一单元，前往训练面板
-                </button>
-                <p className="mt-1.5 text-center text-[10.5px] text-text-3">
-                  提示：所有单元讲解已结束。点击后会进入完成态，并引导你去「训练」面板巩固。
-                </p>
-              </div>
-            )
-          }
-          // 中间单元：「下一单元」按钮
-          return (
-            <div className="shrink-0 border-t border-border-1 bg-blue-500/5 px-5 py-3">
-              <button
-                type="button"
-                onClick={() => void advance('next')}
-                disabled={busy}
-                className="flex w-full items-center justify-center gap-2 rounded-lg bg-blue-500 py-2.5 text-sm font-medium text-white shadow-sm transition hover:bg-blue-600 disabled:cursor-wait disabled:opacity-60"
-              >
-                <ChevronRight className="size-4" />
-                继续下一单元（{currentUnitIndex + 2} / {units.length}）
-              </button>
-              <p className="mt-1.5 text-center text-[10.5px] text-text-3">
-                提示：本单元讲解结束。读完后点击进入下一单元，可在右侧翻屏重温。
-              </p>
-            </div>
-          )
-        })()}
+        currentUnitIndex >= units.length - 1 && (
+          <div className="shrink-0 border-t border-border-1 bg-emerald-500/5 px-5 py-3">
+            <button
+              type="button"
+              onClick={() => void advance('next')}
+              disabled={busy}
+              className="flex w-full items-center justify-center gap-2 rounded-lg bg-emerald-500 py-2.5 text-sm font-medium text-white shadow-sm transition hover:bg-emerald-600 disabled:cursor-wait disabled:opacity-60"
+            >
+              <Check className="size-4" />
+              已学完最后一单元，前往训练面板
+            </button>
+            <p className="mt-1.5 text-center text-[10.5px] text-text-3">
+              提示：所有单元讲解已结束。点击后会进入完成态，并引导你去「训练」面板巩固。
+            </p>
+          </div>
+        )}
 
       {/* ── 翻页栏：贴底 ── */}
       {screens.length > 0 && (
@@ -2005,11 +2218,13 @@ function FollowupArea({
   items,
   onAsk,
   mdTheme,
+  onJumpPage,
 }: {
   suggestions: string[]
   items: FollowupItem[]
   onAsk: (q: string) => void
   mdTheme: MdTheme
+  onJumpPage?: (pageIndex: number) => void
 }) {
   const [draft, setDraft] = useState('')
   const taRef = useRef<HTMLTextAreaElement>(null)
@@ -2052,9 +2267,15 @@ function FollowupArea({
               </div>
             ) : it.answer ? (
               <>
-                <MarkdownView content={it.answer} theme={mdTheme} />
+                {/* ASCII 图 / 宽表格在窄卡里可能溢出 → 允许横向滚动，不折行错乱 */}
+                <div className="fp-answer overflow-x-auto">
+                  <MarkdownView content={it.answer} theme={mdTheme} />
+                </div>
                 {it.streaming && (
                   <span className="ml-1 inline-block size-2 animate-pulse rounded-sm bg-blue-500 align-middle" />
+                )}
+                {!it.streaming && it.sources && it.sources.length > 0 && (
+                  <FollowupSourceList sources={it.sources} onJumpPage={onJumpPage} />
                 )}
               </>
             ) : (
@@ -2129,6 +2350,49 @@ function FollowupArea({
 }
 
 // v5 (2026-05) B3: FollowupHistory 未被引用，已删除。
+
+// 追问回答的 RAG 来源列表：与 ChatTab 的 SourceList 同形态，点击页码标签跳页。
+function FollowupSourceList({
+  sources,
+  onJumpPage,
+}: {
+  sources: RagSource[]
+  onJumpPage?: (pageIndex: number) => void
+}) {
+  return (
+    <div className="mt-2 border-t border-border-1/60 pt-2">
+      <div className="mb-1 text-[9px] uppercase tracking-wide text-text-3">参考原文</div>
+      <ul className="space-y-1">
+        {sources.map((src) => {
+          const label =
+            src.page_start === src.page_end
+              ? `P${src.page_start + 1}`
+              : `P${src.page_start + 1}-${src.page_end + 1}`
+          const canJump = !!onJumpPage && src.page_start >= 0
+          return (
+            <li key={src.chunk_id} className="flex items-start gap-1.5 text-[11px] leading-relaxed">
+              <button
+                type="button"
+                disabled={!canJump}
+                onClick={() => canJump && onJumpPage!(src.page_start)}
+                title={canJump ? '点击跳到该页' : 'EPUB / 流式资料无法精确跳页'}
+                className={cn(
+                  'shrink-0 rounded border px-1.5 py-0.5 font-medium transition',
+                  canJump
+                    ? 'border-blue-500/30 bg-blue-500/8 text-blue-600 hover:bg-blue-500/15 dark:text-blue-400'
+                    : 'cursor-default border-border-2/60 text-text-3',
+                )}
+              >
+                {label}
+              </button>
+              <span className="truncate text-text-3">{src.snippet}</span>
+            </li>
+          )
+        })}
+      </ul>
+    </div>
+  )
+}
 
 // ── 顶部分段进度条 ─────────────────────────────────────────────────────
 // 每个 unit 一段（等宽）：已完成 = 蓝实心，当前 = 渐进填充到当前屏，未到 = 浅灰

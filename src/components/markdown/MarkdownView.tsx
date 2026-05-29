@@ -1,4 +1,4 @@
-import { Children, isValidElement, memo, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import ReactMarkdown, { type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import remarkMath from 'remark-math'
@@ -9,7 +9,6 @@ import { Check, Copy } from 'lucide-react'
 import { cn } from '@/lib/cn'
 import { preprocessMarkdown } from './preprocessor'
 import { InlineIcon } from './IconRegistry'
-import { AsciiDiagram, isAsciiDiagram } from './AsciiDiagram'
 import './markdown.css'
 import 'katex/dist/katex.min.css'
 import 'highlight.js/styles/github.css'
@@ -98,17 +97,10 @@ function MarkdownViewImpl({ content, theme = 'default', className, highlight = t
           </span>
         )
       },
-      // 代码块处理：
-      //   1. 检测是否是 ASCII 流程图 / 框线图 → AsciiDiagram 高级渲染
-      //   2. 其他 → CodeBlockPre（带右上角复制按钮的普通代码块）
+      // 代码块右上角浮现的复制按钮。仅作用在 <pre> 上（fence 块），
       // 行内 <code> 不受影响（react-markdown 把 inline code 直接渲成 <code>）。
       pre: ({ node, children, ...rest }) => {
         void node
-        const text = extractText(children)
-        const lang = extractLanguage(children)
-        if (isAsciiDiagram(text, lang)) {
-          return <AsciiDiagram code={text} language={lang} />
-        }
         return <CodeBlockPre {...rest}>{children}</CodeBlockPre>
       },
     }),
@@ -163,53 +155,6 @@ function MarkdownViewImpl({ content, theme = 'default', className, highlight = t
 }
 
 export const MarkdownView = memo(MarkdownViewImpl)
-
-// 递归提取任意 React 节点的纯文本。用于从 <pre> 子树（可能被 hljs
-// 拆成嵌套 span）提出原始代码文本。
-function extractText(node: ReactNode): string {
-  if (typeof node === 'string') return node
-  if (typeof node === 'number') return String(node)
-  if (node == null || typeof node === 'boolean') return ''
-  if (Array.isArray(node)) return node.map(extractText).join('')
-  if (isValidElement(node)) {
-    const props = node.props as { children?: ReactNode }
-    return extractText(props.children)
-  }
-  return ''
-}
-
-// 从 <pre> 的子节点里找到 <code> 元素的 className 中 `language-xxx` 的 xxx。
-// react-markdown 把 fenced 代码块的 language 存在 <code className="language-xxx"> 上。
-function extractLanguage(node: ReactNode): string | undefined {
-  if (isValidElement(node)) {
-    const props = node.props as { className?: string; children?: ReactNode }
-    if (typeof props.className === 'string') {
-      const m = /\blanguage-([\w-]+)/.exec(props.className)
-      if (m) return m[1]
-    }
-    // 偶尔 children 中还能堆一层 hljs span，递归下去也不会错
-    const sub = extractLanguage(props.children)
-    if (sub) return sub
-  }
-  if (Array.isArray(node)) {
-    for (const c of node) {
-      const r = extractLanguage(c)
-      if (r) return r
-    }
-  }
-  // 使用 Children helper 处理 React.Children iterable
-  if (node && typeof node === 'object' && Symbol.iterator in (node as object)) {
-    let found: string | undefined
-    Children.forEach(node as ReactNode, (c) => {
-      if (!found) {
-        const r = extractLanguage(c)
-        if (r) found = r
-      }
-    })
-    if (found) return found
-  }
-  return undefined
-}
 
 /**
  * 代码块容器：右上角浮一个「复制」按钮。

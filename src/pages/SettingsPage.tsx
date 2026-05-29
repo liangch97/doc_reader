@@ -620,16 +620,61 @@ interface DiagnoseResult {
   error: string | null
 }
 
+/// 常用语言按钮（按用户友好排序：脚本语言 → 主流编译语言 → 系统/低级 → JVM / 其他）。
+/// 每个 language 字段是"用户友好名"，会通过后端 `normalize_install_language`
+/// 映射成 Piston 实际包名（如 javascript→node, c/c++→gcc）。
 const COMMON_RUNTIMES: Array<{ language: string; label: string }> = [
+  // 脚本 / 高级
   { language: 'python', label: 'Python' },
-  { language: 'javascript', label: 'JavaScript (Node.js)' },
+  { language: 'javascript', label: 'JavaScript' },
   { language: 'typescript', label: 'TypeScript' },
-  { language: 'java', label: 'Java' },
+  { language: 'ruby', label: 'Ruby' },
+  { language: 'php', label: 'PHP' },
+  { language: 'lua', label: 'Lua' },
+  { language: 'perl', label: 'Perl' },
+  { language: 'r', label: 'R' },
+  // 编译 / 系统
+  { language: 'c', label: 'C' },
+  { language: 'c++', label: 'C++' },
   { language: 'rust', label: 'Rust' },
   { language: 'go', label: 'Go' },
-  { language: 'c++', label: 'C++' },
-  { language: 'c', label: 'C' },
+  { language: 'zig', label: 'Zig' },
+  { language: 'nim', label: 'Nim' },
+  // JVM
+  { language: 'java', label: 'Java' },
+  { language: 'kotlin', label: 'Kotlin' },
+  { language: 'scala', label: 'Scala' },
+  // .NET / Apple
+  { language: 'csharp', label: 'C#' },
+  { language: 'swift', label: 'Swift' },
+  // 函数式 / 学术
+  { language: 'haskell', label: 'Haskell' },
+  { language: 'ocaml', label: 'OCaml' },
+  { language: 'elixir', label: 'Elixir' },
+  { language: 'erlang', label: 'Erlang' },
+  { language: 'julia', label: 'Julia' },
+  { language: 'clojure', label: 'Clojure' },
+  // 其他
+  { language: 'dart', label: 'Dart' },
+  { language: 'crystal', label: 'Crystal' },
+  { language: 'bash', label: 'Bash' },
+  { language: 'pwsh', label: 'PowerShell' },
 ]
+
+/// 把 Piston `/runtimes` 返回的语言名规范化成 COMMON_RUNTIMES 里的按钮 key。
+/// 用来判断"已装"：例如装了 Piston 包 `gcc` 之后，C 和 C++ 两个按钮都该高亮。
+/// 跟后端 `runtime::normalize_install_language` 互为反向。
+function pistonLangToButtonKeys(pistonLang: string): string[] {
+  const l = pistonLang.toLowerCase()
+  if (l === 'gcc') return ['c', 'c++']
+  if (l === 'node') return ['javascript']
+  if (l === 'mono' || l === 'dotnet') return ['csharp']
+  if (l === 'vlang') return ['v']
+  if (l === 'rscript') return ['r']
+  if (l === 'pwsh') return ['pwsh']
+  if (l === 'lisp') return ['lisp']
+  return [l]
+}
 
 function DockerPistonPanel({ onEndpointSet }: { onEndpointSet: (url: string) => void }) {
   const [diag, setDiag] = useState<DiagnoseResult | null>(null)
@@ -640,6 +685,7 @@ function DockerPistonPanel({ onEndpointSet }: { onEndpointSet: (url: string) => 
   const [advOpen, setAdvOpen] = useState(false)
   const [containerLogs, setContainerLogs] = useState<string>('')
   const [containerPorts, setContainerPorts] = useState<string>('')
+  const [customLang, setCustomLang] = useState<string>('') // 自定义安装：任意 Piston 包名
 
   const refresh = useCallback(async () => {
     setLoading(true)
@@ -1105,7 +1151,11 @@ function DockerPistonPanel({ onEndpointSet }: { onEndpointSet: (url: string) => 
           )}
           <div className="flex flex-wrap gap-1">
             {COMMON_RUNTIMES.map((rt) => {
-              const has = installed.some((x) => x.language === rt.language)
+              // 判断已装：把 Piston 返回的包名（如 gcc / node）映射成按钮 key 集合,
+              // 任何映射结果包含当前按钮 key 即视为已装（C 和 C++ 共用 gcc 包）。
+              const has = installed.some((x) =>
+                pistonLangToButtonKeys(x.language).includes(rt.language),
+              )
               const installing = busy === `install:${rt.language}`
               return (
                 <button
@@ -1134,6 +1184,54 @@ function DockerPistonPanel({ onEndpointSet }: { onEndpointSet: (url: string) => 
                 </button>
               )
             })}
+          </div>
+
+          {/* 自定义安装：装任意 Piston 包（Piston 总共支持 50+ 语言，常用的已经在上面按钮里）。
+              用户输入包名（如 cobol / fortran / dotnet / racket）+ 可选版本号。 */}
+          <div className="mt-2 flex flex-wrap items-center gap-1 text-[10.5px]">
+            <span className="text-text-3">其他语言：</span>
+            <input
+              type="text"
+              value={customLang}
+              onChange={(e) => setCustomLang(e.target.value)}
+              placeholder="包名 (如 cobol, racket, julia, fortran)"
+              disabled={!!busy}
+              className="min-w-[200px] flex-1 rounded border border-border-1 bg-surface-1 px-1.5 py-0.5 text-[10.5px] text-text-1 placeholder:text-text-3 focus:border-accent focus:outline-none disabled:cursor-not-allowed disabled:opacity-60"
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && customLang.trim() && !busy) {
+                  e.preventDefault()
+                  handleInstall(customLang.trim())
+                }
+              }}
+            />
+            <button
+              type="button"
+              disabled={!customLang.trim() || !!busy}
+              onClick={() => handleInstall(customLang.trim())}
+              className={cn(
+                'inline-flex items-center gap-1 rounded border border-border-1 bg-surface-2 px-2 py-0.5 text-text-2',
+                !customLang.trim() || busy
+                  ? 'cursor-not-allowed opacity-60'
+                  : 'hover:bg-surface-3',
+              )}
+              title="装任意 Piston 包；包名必须与 GET /api/v2/packages 返回的 language 字段一致"
+            >
+              {busy === `install:${customLang.trim()}` ? (
+                <Loader2 className="h-3 w-3 animate-spin" />
+              ) : (
+                <Download className="h-3 w-3" />
+              )}
+              安装
+            </button>
+            <a
+              href="https://github.com/engineer-man/piston/tree/master/packages"
+              target="_blank"
+              rel="noreferrer"
+              className="text-text-3 underline hover:text-text-2"
+              title="所有可装的 Piston 包列表"
+            >
+              查看可装语言
+            </a>
           </div>
         </div>
       )}
